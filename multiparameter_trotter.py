@@ -14,23 +14,27 @@ def H_c(phi=[], beta=1, omega=1, J=1):
     H_c = np.array([omega*(np.cos(phi[i])*J_x+np.sin(phi[i])*J_y)+ beta/(2*J) * J_z2 for i in range(len(phi))])
     return H_c
 #Parameters
-rng = np.random.default_rng(1)
+rng = np.random.default_rng()
 J = 4.5
 dim = int(2*J+1)
 t_steps = 7000
 delta_t = 0.001
-beta = 1
+#beta = 1 
 omega = 1
-w_true = [0.1, -0.2, 0.15]
-sn_sd = 1/np.sqrt(100000 * delta_t)
-gtol = 1e-4
-theta_scs = np.pi/2
-phi_scs = 0
+w_true = [0.1, -0.2, 0.15] #True parameter values
+w_init = [0, 0, 0] #Initial guess for parameters
+batch_size = 50 #Number of parallel optimizations
+iter = 500 #Total number of optimization iterations
+beta_array = np.array([1]) #Array of beta values for different runs
+sn_sd = 1/np.sqrt(100000 * delta_t) #Standard deviation of shot noise
+gtol = 1e-5 #Gradient tolerance for optimization convergence
+theta_scs = np.pi/2 #Initial spin coherent state parameters
+phi_scs = 0 #Initial spin coherent state parameters
 J_x = spin_Jx(J).full()
 J_y = spin_Jy(J).full()
 J_z = spin_Jz(J).full()
 J_z2 = J_z @ J_z
-obs_0 = J_y
+obs_0 = J_y #Initial observable
 
 if np.array_equal(obs_0, J_x):
     obs_0_string = 'J_x'
@@ -110,7 +114,7 @@ def compute_expectations(w):
     for i in range(1, t_steps):
         del_obs_z = (del_U_w_dagger_z @ U_c_dagger_array[i] @ obs_array[i] @ U_c_array[i] @ U_w + 
                      U_w_dagger @ U_c_dagger_array[i] @ obs_array[i] @ U_c_array[i] @ del_U_w_z + 
-                     U_w_dagger @ U_c_dagger_array[i] @ del_obs_y @ U_c_array[i] @ U_w)
+                     U_w_dagger @ U_c_dagger_array[i] @ del_obs_z @ U_c_array[i] @ U_w)
         del_expect_z[i+1] = expect(del_obs_z, in_state)   
     return expectation, del_expect_x, del_expect_y, del_expect_z
 
@@ -135,10 +139,6 @@ def w_estimate(gaussian_noise, expectation, w_init):
 
 
 # %%
-w_init = [0, 0, 0]
-batch_size = 50
-iter = 500
-beta_array = np.array([1])
 runs = len(beta_array)
 runtime_array = np.zeros(runs)
 covar_array = [None] * runs
@@ -220,7 +220,7 @@ for i in range(runs):
 
 
 # %%
-#Folder to save data in (Change this to your desired path)
+#Folder to save data in
 folder = "/users/agarcia2001/data_"
 
 parameters = (
