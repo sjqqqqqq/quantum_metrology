@@ -221,7 +221,7 @@ for i in range(runs):
 
 # %%
 #Folder to save data in
-folder = "/users/agarcia2001/data_"
+folder = "/users/sjqqqqqq/metrology_data"
 
 parameters = (
     f"Parameters: J = {J}; beta = {beta:.3f}; omega = {omega}; w = {w_true}; sn_sd = {sn_sd:.3f}; "
