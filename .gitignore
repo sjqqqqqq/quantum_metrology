@@ -42,3 +42,9 @@ build/
 *.log
 *.sqlite3
 
+# NumPy data files
+*.npy
+
+# Claude Code
+.claude/
+CLAUDE.md
