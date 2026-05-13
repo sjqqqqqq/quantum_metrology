@@ -66,8 +66,11 @@ for k in range(N):
 assert np.all(np.einsum('ij,ij->i', x_traj, x_traj) <= 1.1), "Bloch vector escaped unit ball"
 
 # %% EKF
+# (1) correlated-noise gain: dW drives both state and measurement, so
+#     K = (P C^T + g(x)) / S  — recovers the SSE/Belavkin form in the dt→0 limit.
+# (2) state-dependent process noise: Q_k = g(x̂) g(x̂)^T dt, no tuning knobs.
+# (3) Heun (RK2) predict, matching the truth integrator.
 I3 = np.eye(3)
-Q = np.diag([dt, dt, dt / 10.0])
 R = 1.0 / dt                            # Var(dW/dt) = 1/dt
 C = np.array([[0.0, 0.0, sqrt_etaM]])
 
@@ -84,18 +87,25 @@ for k in range(N):
     xp = xhat_post[k]
     Pp = P_post[k]
 
-    # Predict
-    x_pri = xp + f(tk, xp) * dt
-    A = I3 + dt * jac_f(tk)
-    P_pri = A @ Pp @ A.T + Q
+    # Predict (Heun on the deterministic drift; trapezoidal jac_f for A)
+    f1 = f(tk, xp)
+    x_mid = xp + f1 * dt
+    f2 = f(tk + dt, x_mid)
+    x_pri = xp + 0.5 * (f1 + f2) * dt
+
+    A = I3 + 0.5 * dt * (jac_f(tk) + jac_f(tk + dt))
+    G = g(xp)                              # diffusion at posterior mean
+    Q_k = np.outer(G, G) * dt              # state-dependent process noise
+    P_pri = A @ Pp @ A.T + Q_k
     xhat_prior[k + 1] = x_pri
 
-    # Update
-    S = C @ P_pri @ C.T + R                # 1x1
-    K = P_pri @ C.T / S[0, 0]              # 3x1
+    # Update (correlated-noise gain: extra +g term)
+    G_pri = g(x_pri)
+    S = C @ P_pri @ C.T + R                                 # 1x1
+    K = (P_pri @ C.T + G_pri.reshape(-1, 1)) / S[0, 0]      # 3x1
     innov = y[k] - sqrt_etaM * x_pri[2]
-    x_post_new = x_pri + (K[:, 0] * innov)
-    P_post_new = (I3 - K @ C) @ P_pri
+    x_post_new = x_pri + K[:, 0] * innov
+    P_post_new = P_pri - (K @ K.T) * S[0, 0]                # = P_pri - K S K^T
 
     xhat_post[k + 1] = x_post_new
     P_post[k + 1] = P_post_new
