@@ -28,8 +28,9 @@ dist/
 build/
 *.egg-info/
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
 # Configuration files
 # Sensitive configuration files like API keys or database credentials
@@ -41,3 +42,9 @@ build/
 *.log
 *.sqlite3
 
+# NumPy data files
+*.npy
+
+# Claude Code
+.claude/
+CLAUDE.md
