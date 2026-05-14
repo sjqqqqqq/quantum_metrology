@@ -37,7 +37,7 @@ def rk4_step(x, u_k, dt):
 # %% Simulate nonlinear truth + noisy measurements
 rng = np.random.default_rng(0)
 x_true = np.zeros((n, N + 1))
-x_true[:, 0] = np.array([np.pi / 2, 0.0])
+x_true[:, 0] = np.array([0.2, 0.0])
 y_meas = np.zeros((1, N))
 u = np.zeros((1, N))
 
@@ -75,7 +75,7 @@ for k in range(N):
 t = np.arange(N + 1) * Ts
 fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 axes[0].plot(t, x_true[0], label='true theta')
-axes[0].plot(t[1:], y_meas[0], '.', ms=2, alpha=0.4, label='measured')
+axes[0].plot(t[1:], y_meas[0], ms=2, alpha=0.4, label='measured')
 axes[0].plot(t, x_hat[0], label='EKF theta')
 axes[0].set_ylabel('theta [rad]')
 axes[0].legend()
