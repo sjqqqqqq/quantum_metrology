@@ -69,7 +69,8 @@ for k in range(N):
 I3 = np.eye(3)
 P0 = np.diag([1.0, 1.0, 1.0])
 Q = np.diag([1.0, 1.0, 0.1]) * dt        # tuned constant Q
-R = 1.0 / np.sqrt(dt)                    # tuned measurement noise covariance
+# R = 1.0 / np.sqrt(dt)                    # tuned measurement noise covariance
+R = 1.0 / dt
 C = np.array([[0.0, 0.0, sqrt_etaM]])    # dh/dx (constant)
 
 xhat_prior = np.zeros((N + 1, 3))
