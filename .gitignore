@@ -1,3 +1,54 @@
 *.mp4
 *.png
 merged/
+
+# Byte-code files
+*.pyc
+__pycache__/
+*.pyd
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# IDE-specific files
+.vscode/
+.idea/
+*.iml
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Test and build artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.nox/
+dist/
+build/
+*.egg-info/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Configuration files
+# Sensitive configuration files like API keys or database credentials
+# should be ignored. For example:
+# config.ini
+# .env
+
+# Other common files to ignore
+*.log
+*.sqlite3
+
+# NumPy data files
+*.npy
+
+# Claude Code
+.claude/
+CLAUDE.md
