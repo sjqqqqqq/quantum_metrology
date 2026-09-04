@@ -68,5 +68,5 @@ For each `task_N/` folder: drop fits whose `cost_est` exceeds the 5σ cost band 
 
 ## Git notes
 
-- `CLAUDE.md` and `.claude/` are in `.gitignore`, so this file is local-only unless that entry is removed.
+- `CLAUDE.md` is tracked so cluster clones get it; `.claude/` stays gitignored.
 - Branches are per-collaborator (`jay_decoherence`, `noah-dev`, `Alejandro_branch`, ...); `main` is the integration branch.
