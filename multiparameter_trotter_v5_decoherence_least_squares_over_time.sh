@@ -3,9 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --array=0-19
 #SBATCH --time=24:00:00
-#SBATCH --mail-user=agarcia2001@unm.edu
-#SBATCH --mail-type=ALL
-#SBATCH --output=mle_over_time_v5_decoherence_%A_%a.out
+#SBATCH --output=/users/sjqqqqqq/quantum_metrology/slurm_logs/mle_over_time_v5_decoherence_%A_%a.out
 #SBATCH --cpus-per-task=32
 #SBATCH --mem-per-cpu=2G
 
@@ -15,7 +13,9 @@
 # allocated cores). Constrain BLAS to one thread per worker before numpy is ever imported.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
 
-source /users/agarcia2001/venv/bin/activate
+# Project-local venv (see CLAUDE.md); built on the easley cluster from module python/3.13.5.
+repo="/users/sjqqqqqq/quantum_metrology"
+python="$repo/.venv/bin/python"
 
 # Open-system counterpart of multiparameter_trotter_v4_least_squares_over_time.sh: each beta runs
 # with light-induced spin-flip decoherence at rate gamma = beta/eta (see the v5 script docstring).
@@ -24,9 +24,9 @@ source /users/agarcia2001/venv/bin/activate
 # Deutsch-Jessen polarizability/optical-pumping formulas for the actual line and detuning.
 # The beta list is shortened: at eta ~ 30 and T = 14/Omega, beta >~ 5 is decoherence-dominated.
 # One trial per array task, seeded by its task ID; merge task_*/ afterwards as for v4.
-outdir="/users/agarcia2001/data_mle_over_time_decoherence_1/task_${SLURM_ARRAY_TASK_ID}"
+outdir="$repo/data_mle_over_time_decoherence_1/task_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$outdir"
-python /users/agarcia2001/multiparameter_trotter_v5_decoherence_least_squares_over_time.py \
+"$python" "$repo/multiparameter_trotter_v5_decoherence_least_squares_over_time.py" \
     --outdir "$outdir" \
     --t-steps 14000 \
     --n-cutoffs 40 \
@@ -39,6 +39,4 @@ python /users/agarcia2001/multiparameter_trotter_v5_decoherence_least_squares_ov
     --t-stage-start 250 \
     --n-jobs -1 \
     --n-trials 1 \
-    --seed "$SLURM_ARRAY_TASK_ID" \
-
-deactivate
+    --seed "$SLURM_ARRAY_TASK_ID"
