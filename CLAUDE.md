@@ -33,7 +33,7 @@ Post-processing (edit `DATA_ROOT` first, then run with no arguments):
 .venv/bin/python filter_cost_band_mle_over_time_benchmark_1.py  # benchmark (no beta axis)
 ```
 
-Plots live in `multiparameter_plots_v4.ipynb` (the earlier `_v2`/`_v3`/unsuffixed notebooks are history). The notebooks hard-code the same Windows paths and expect a `load_npy(dir)` helper defined in the first cell that loads every `.npy` in a folder into a dict keyed by stem.
+Plots live in `multiparameter_plots_v4.ipynb` (closed-system runs 1–12 and the benchmark; the earlier `_v2`/`_v3`/unsuffixed notebooks are history) and `multiparameter_plots_v5.ipynb` (the `data_mle_over_time_decoherence_*` runs). v4 hard-codes the same Windows paths; v5 uses paths relative to the repo root, does the cost-band filtering and the average over `task_N` folders in-notebook (no `filtered_avg/` for those runs), and adds the decoherence trade-off plots (ratio to the β = 0 closed system, best β vs time). Both expect a `load_npy(dir)` helper defined in the first cell that loads every `.npy` in a folder into a dict keyed by stem. Execute a notebook headlessly with `.venv/bin/jupyter nbconvert --to notebook --execute --inplace <nb>`.
 
 ## Architecture
 
