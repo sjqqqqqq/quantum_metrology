@@ -23,7 +23,7 @@ Quick local smoke run of the main simulation (production settings take hours on 
     --outdir /path/to/out --t-steps 2000 --n-cutoffs 5 --iter 10 --batch-size 10 \
     --betas 0 1 --n-trials 1 --seed 3 --n-jobs 4
 ```
-`--iter` must be a multiple of `--batch-size`. The benchmark variant takes the same flags minus `--betas`.
+`--iter` must be a multiple of `--batch-size`. The benchmark variant takes the same flags minus `--betas`; v5 adds `--eta`; v6 requires `--eta` and `--od` and rejects beta = 0.
 
 Production runs are SLURM job arrays (`*.sh`), one trial per array task seeded by `SLURM_ARRAY_TASK_ID`, writing to `data_mle_over_time_N/task_<id>/`. The paths inside the `.sh` files and the `DATA_ROOT` constants in the `filter_cost_band_*.py` scripts are hard-coded to the cluster / a collaborator's Windows machine and must be edited before use.
 
@@ -37,13 +37,14 @@ Plots live in `multiparameter_plots_v4.ipynb` (closed-system runs 1–12 and the
 
 ## Architecture
 
-### Simulation scripts (`multiparameter_trotter_v4_least_squares_over_time*.py`, `..._v5_decoherence_...py`)
+### Simulation scripts (`multiparameter_trotter_v4_least_squares_over_time*.py`, `..._v5_decoherence_...py`, `..._v6_decoherence_...py`)
 
-Three near-identical scripts differing in the control and in whether the system is open:
+Four near-identical scripts differing in the control, in whether the system is open, and in how the readout is modeled:
 
 - **Main script (v4)**: control Hamiltonian `H_c = omega*(cos(phi) J_x + sin(phi) J_y) + beta/(2J) * J_z^2`. `phi` is piecewise constant, re-drawn every `random_phase_steps` (1000) steps, and drawn fresh for every realization. `beta` is swept via `--betas`, giving output arrays a leading `n_beta` axis.
 - **Benchmark script**: fixed deterministic cyclic control (quarter-turns about z, x, y that carry the spin coherent state x → y → z → x). No `beta` axis anywhere in its outputs.
 - **Open-system script (v5 decoherence)**: v4 plus one Lindblad channel, the light-induced spin-flip channel `L = sqrt(gamma) J_±`, with `gamma = beta/eta` per beta (`--eta`; omit it and the script is bit-for-bit v4). Physics: `beta J_z^2` is the tensor light shift of an off-resonant beam and the same beam's Raman scattering is the decoherence, so their ratio `eta` is fixed by the atom. Implemented in the Heisenberg picture as a precomputed `dim^2 x dim^2` superoperator `A = expm(dt D^dag)` applied to the vectorized observable once per Trotter step before the unitary conjugation; `A` is w-independent, so the fit residuals and the Fréchet-derivative Fisher recursion just pass `obs` and `d obs/dw` through it. Exactly `<J_x>,<J_y>` relax at `gamma` and `<J_z>` at `2 gamma`. Readout-beam decoherence and loss to the other hyperfine manifold are deliberately not modeled. Extra output: `gamma_array.npy`.
+- **One-beam script (v6 decoherence)**: v5 with the readout being the same beam. The probe strength is one knob, so per beta the script derives both `gamma = beta/eta` and the shot noise `sn_sd = sqrt(eta/(OD_eff*N_a*dt*beta))` from two required physics inputs, `--eta` (atom) and `--od` (effective resonant optical depth of the sample); `--n-atoms` defaults to 2e5 and the old `G`/`N_p` constants are gone. beta = 0 is rejected (no light = no measurement), so there is no decoherence-free reference and the optimum sits at finite beta ~ eta/T. `--tensor-scale 0` is the control experiment: same gamma and sn_sd, no `J_z^2` term. Extra outputs: `sn_sd_array.npy`, and `cost_floor.npy` is `(n_beta, n_time)`. With `--od` chosen so that `sn_sd` matches, a single-beta v6 run reproduces v5 to rounding.
 
 Pipeline in both, per trial:
 1. Draw `w_true ~ N(0, w_stdev)`.

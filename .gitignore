@@ -52,3 +52,14 @@ build/
 # Claude Code
 .claude/
 slurm_logs/
+
+# LaTeX build artifacts (keep .tex and .pdf)
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+*.bbl
+*.blg

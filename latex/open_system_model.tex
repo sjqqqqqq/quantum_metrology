@@ -180,6 +180,8 @@ study. Both can be removed within the same numerical scheme.
 
 \subsection*{A1: the readout beam does not decohere the atoms}
 
+\emph{Relaxed in Section~\ref{sec:onebeam} (script v6).}
+
 The measurement model treats the $N_p$ readout photons per step as pure shot noise. A
 readout beam scatters photons too, through the same Raman channel (\ref{eq:jumps}),
 so it adds to $\gamma$ a rate $\gamma_r$ set by the readout intensity rather than by
@@ -233,5 +235,61 @@ not dark: they Faraday-rotate the readout with a different (roughly opposite) si
 evolve under a different light shift. Treating that properly requires enlarging the
 state space to $F \oplus F'$ (dimension $16$ for Cs), which the superoperator scheme
 of Section 6 supports at the cost of a $256\times256$ dissipative map.
+
+
+\section{One beam: light shift, decoherence and readout from the same probe}
+\label{sec:onebeam}
+
+In the actual scheme there is a single off-resonant, linearly polarized probe. It produces
+the tensor shift, it scatters photons, and its Faraday rotation is the readout. With photon
+flux $\Phi$ and detuning $\Delta$, in the far-detuned limit,
+\begin{equation}
+  \beta \propto \frac{\Phi\,\Delta_{\mathrm{HF}}'}{\Delta^{2}}, \qquad
+  \gamma \propto \frac{\Phi\,\Gamma}{\Delta^{2}}, \qquad
+  G \propto \frac{1}{\Delta}, \qquad
+  \sigma^{2} = \frac{1}{N_p G^{2} N_a^{2}} \propto \frac{\Delta^{2}}{\Phi},
+\end{equation}
+where $G$ is the rotation per atom per unit spin and $N_p \propto \Phi$ the photons per
+measurement interval $\dt$. All four depend on $\Phi$ and $\Delta$ only through
+$\Phi/\Delta^{2}$, so the probe strength is a single knob and two ratios are fixed by the
+physics:
+\begin{equation}
+  \frac{\beta}{\gamma} = \eta, \qquad
+  \gamma\,\sigma^{2}\,\dt = \frac{1}{\mathrm{OD}_{\mathrm{eff}}\,N_a},
+  \qquad \mathrm{OD}_{\mathrm{eff}} = c\,\frac{N_a\sigma_0}{A},
+  \label{eq:onebeam}
+\end{equation}
+with $c$ an order-one factor from the vector polarizability and the spin-flip branching
+ratio. The second relation is the readout back-action of Section~7 made exact: the
+photons that carry the Faraday signal are the photons that scatter. Taking $\beta$ as the
+sweep variable, the script \texttt{v6} derives per $\beta$
+\begin{equation}
+  \gamma = \frac{\beta}{\eta}, \qquad
+  \sigma(\beta) = \sqrt{\frac{\eta}{\mathrm{OD}_{\mathrm{eff}}\,N_a\,\dt\,\beta}} .
+  \label{eq:onebeam-derived}
+\end{equation}
+A stronger probe brings more nonlinearity, more decoherence and \emph{less} shot noise;
+$\beta \to 0$ is no light at all, with no decoherence but no measurement either, so
+$\beta = 0$ is excluded from the sweep and there is no decoherence-free reference. The
+former constants $G$ and $N_p$ are absorbed into $\mathrm{OD}_{\mathrm{eff}}$; with the
+values used in v4/v5 and $\eta = 30$, $\mathrm{OD}_{\mathrm{eff}} = 10$, the old noise level
+$\sigma = 0.021$ corresponds to $\beta \approx 33$, a far stronger probe than any $\beta$
+in the v5 sweep. The two physics inputs are now $\eta$ (atom) and $\mathrm{OD}_{\mathrm{eff}}$
+(sample); both are placeholders in the launcher until derived and measured.
+
+\paragraph{Expected shape of the optimum.} The Fisher information per step is
+$(\partial\expval{O}/\partial w)^2/\sigma^2 \propto \beta\,(\partial\expval{O}/\partial w)^2$,
+and the derivative decays on the scale $\eta/\beta$. For $T \ll \eta/\beta$ the information
+grows like $\beta\,T^{3}$ (more probe is better), for $T \gg \eta/\beta$ it saturates like
+$\eta^{3}/\beta^{2}$ (less probe is better), so the optimum sits at a finite
+$\beta_{\rm opt} \sim \eta/T$ for every $T$. Unlike v5, where $\beta = 0$ eventually won
+because it was decoherence-free, the one-beam model always has a nonzero optimal probe
+strength.
+
+\paragraph{Control experiment.} Because the nonlinearity cannot be switched off physically
+without switching off the probe, \texttt{v6} has a flag \texttt{--tensor-scale} that
+multiplies the $J_z^2$ term in the Hamiltonian only, keeping the beam-derived $\gamma$ and
+$\sigma$. Running the same sweep with \texttt{--tensor-scale 0} isolates what the nonlinear
+dynamics contributes to the estimation at fixed decoherence and fixed shot noise.
 
 \end{document}
