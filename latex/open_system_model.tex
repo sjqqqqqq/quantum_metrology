@@ -215,6 +215,8 @@ one intensity.)
 
 \subsection*{A2: no loss from the $F$ manifold}
 
+\emph{Relaxed in Section~\ref{sec:loss} (script v7).}
+
 The Raman process that gives (\ref{eq:jumps}) also transfers atoms to the other
 ground hyperfine manifold ($F=4$ for Cs $F=3$) with a branching ratio of order one,
 so loss occurs at a rate $\gamma_L \sim \gamma$. Within the $F$-manifold Hilbert
@@ -291,5 +293,79 @@ without switching off the probe, \texttt{v6} has a flag \texttt{--tensor-scale} 
 multiplies the $J_z^2$ term in the Hamiltonian only, keeping the beam-derived $\gamma$ and
 $\sigma$. Running the same sweep with \texttt{--tensor-scale 0} isolates what the nonlinear
 dynamics contributes to the estimation at fixed decoherence and fixed shot noise.
+
+
+\section{Loss, and the light-induced coefficients from atomic structure}
+\label{sec:loss}
+
+The coefficients that Sections~2 and~\ref{sec:onebeam} left as placeholders ($\eta$, the
+order-one factors in $\mathrm{OD}_{\mathrm{eff}}$) follow from the atomic structure. The
+script \texttt{cs\_light\_shift\_scattering\_ratios.py} builds, for Cs ($I = 7/2$) on the
+D1 or D2 line and a $\pi$-polarized far-detuned probe, the ground-state light-shift
+operator and the optical-pumping jump operators by adiabatic elimination of the excited
+manifold (Steck matrix elements, closure and normalization checked, vector-to-scalar
+polarizability ratio converging to $\pm 1/4$ on D1 and $\pm 1/8$ on D2). Writing
+$\gamma_s$ for the total photon scattering rate of the spin coherent state, the far-detuned
+values are
+\begin{center}
+\begin{tabular}{lccccc}
+\hline
+line, $F$ & $\eta_s = \beta/\gamma_s$ & $r_{\rm within}$ & $K_L/\gamma_s = a_L + c_L m^2$ & $b/a$ & $\eta_{\rm tot} = \beta/R_{\rm tot}$ \\
+\hline
+D2, $F=3$ & $7.4$   & $0.0055$ & $0.204 + 0.0107\,m^2$ & $0.127$  & $33$   \\
+D2, $F=4$ & $-9.5$  & $0.0052$ & $0.130 + 0.0104\,m^2$ & $-0.123$ & $-61$  \\
+D1, $F=3$ & $-100$  & $0.0110$ & $0.412 + 0.0264\,m^2$ & $-0.243$ & $-217$ \\
+D1, $F=4$ & $122$   & $0.0115$ & $0.254 + 0.0170\,m^2$ & $0.257$  & $408$  \\
+\hline
+\end{tabular}
+\end{center}
+Here $r_{\rm within}\gamma_s$ is the rate of the within-manifold spin-flip channel
+(\ref{eq:jumps}), $K_L$ the rate operator of Raman transfer out of the manifold, $b/a$ the
+vector-to-scalar polarizability ratio per unit $m$ that sets the Faraday signal, and
+$R_{\rm tot} = r_{\rm within}\gamma_s + \expval{K_L}$ the initial relaxation rate of
+$\expval{F_x}$. A negative $\eta_s$ is a tensor shift of the opposite sign. Two things stand
+out: the relaxation is 96--98\,\% loss and only a few per cent spin flips, so the channel of
+Sections~2--5 is the minor one; and $\eta_{\rm tot} = 33$ for D2, $F=3$ is essentially the
+placeholder $\eta = 30$ used so far, while D1, $F=4$ offers twelve times more nonlinearity
+per unit of relaxation.
+
+\paragraph{Master equation with loss.} The loss adds a trace-decreasing term with no jump
+operator, since the atom leaves the manifold:
+\begin{equation}
+  \dv{\rho}{t} = -i[H,\rho] + \mathcal{D}_{\rm sf}[\rho] - \tfrac12\{K_L,\rho\},
+  \qquad
+  \dv{O}{t} = i[H,O] + \mathcal{D}^\dagger_{\rm sf}[O] - \tfrac12\{K_L,O\},
+  \qquad K_L = \gamma_s\big(a_L + c_L \Jz^2\big),
+\end{equation}
+with $\mathcal{D}_{\rm sf}$ the channel (\ref{eq:D}) at rate $r_{\rm within}\gamma_s$. The
+step map $A = e^{\dt\,\mathcal{D}^\dagger}$ of Section~6 absorbs both terms and stays
+$\bm w$-independent; on the identity it acts as $e^{-\dt K_L}$, so $\Tr[O(t)\rho_0]$ is the
+survival probability times the conditional expectation, which is the collective Faraday
+signal if lost atoms are dark. Survivors evolve coherently: loss only scales the signal,
+unlike the spin-flip channel that scrambles it. The remaining approximation of the light
+model is that atoms transferred to $F'$ are not in fact dark; they carry a vector response
+of opposite sign and a different light shift.
+
+\paragraph{Parametrization (script v7).} With the probe strength swept as $\beta$,
+\begin{equation}
+  \gamma_s = \frac{\beta}{|\eta_s|}, \qquad
+  \gamma_{\rm sf} = r_{\rm within}\gamma_s, \qquad
+  K_L = \gamma_s(a_L + c_L\Jz^2), \qquad
+  \sigma^2 = \frac{1}{(b/a)^2\,\mathrm{OD}_{\rm res}\,N_a\,\dt\,\gamma_s},
+\end{equation}
+where $\mathrm{OD}_{\rm res} = N_a\sigma_{\rm res}/A$ is the resonant optical depth of the
+probe transition, the only sample input besides $N_a$. In terms of Section~\ref{sec:onebeam},
+$\mathrm{OD}_{\rm eff} = (b/a)^2\,\mathrm{OD}_{\rm res}/(R_{\rm tot}/\gamma_s)$, which is
+$0.07$ (D2, $F=3$) to $0.22$ (D1, $F=4$) of $\mathrm{OD}_{\rm res}$. The
+$\mathrm{OD}_{\rm eff} = 10$ of the first one-beam run therefore corresponds to
+$\mathrm{OD}_{\rm res} \approx 140$; a free-space cloud of $2\times10^5$ atoms in a 50\,$\mu$m
+beam has $\mathrm{OD}_{\rm res}$ of order 6--9, so both values are worth running.
+
+\paragraph{Cram\'er--Rao bookkeeping.} The simulation fits every realization on its own
+control sequence. The bound that such an estimator can reach, averaged over realizations,
+is $\mathbb{E}[F_i^{-1}]$, not $[\mathbb{E}F_i]^{-1}$ (Jensen); with strong decoherence
+the information comes from a short window in which the particular control phases matter,
+and the two differ by an order of magnitude (a factor 17 at $\beta = 20$, $\eta = 30$).
+Scripts v6 and v7 save both.
 
 \end{document}

@@ -1,58 +1,41 @@
 # %%
-"""One-beam open-system (v6) variant of multiparameter_trotter_v5_decoherence_least_squares_over_time.py.
+"""One-beam open-system WITH LOSS (v7) variant of multiparameter_trotter_v6_decoherence_least_squares_over_time.py.
 
-v5 assumed that the beam producing the tensor light shift beta/(2J) J_z^2 (and, through its
-photon scattering, the spin-flip decoherence gamma = beta/eta) was separate from the readout
-beam, whose shot noise sn_sd was a fixed constant. That made beta = 0 a decoherence-free
-closed system, which is unphysical: in the actual scheme ONE off-resonant, linearly
-polarized beam does all three jobs -- it shifts (tensor term), it scatters (decoherence),
-and it is read out (Faraday rotation with photon shot noise).
+v6 kept the two simplifications of the first open-system model: only the within-manifold
+spin-flip channel, and atomic constants entered as two placeholders (eta, OD_eff). A
+first-principles calculation for Cs (cs_light_shift_scattering_ratios.py: dipole matrix
+elements, far-detuned pi-polarized probe, adiabatic elimination of the excited manifold)
+shows that per scattered photon the transverse relaxation of <F_x> is ~97% RAMAN LOSS to the
+other ground hyperfine manifold and only ~3% within-manifold spin flips. This script adds the
+loss channel and takes every light-induced coefficient from that calculation, so the only
+free physics inputs left are the probe strength (swept as beta), the sample's resonant
+optical depth, and the atom count.
 
-With photon flux Phi and detuning Delta the three effects scale as
-    beta   ~ Phi / Delta^2       (tensor light shift, via Delta_HF'/Delta)
-    gamma  ~ Phi / Delta^2       (photon scattering rate)
-    G      ~ 1 / Delta           (Faraday rotation per atom per unit spin)
-and the per-measurement shot noise is sn_sd^2 = 1/(N_p G^2 N_a^2) ~ Delta^2/Phi with
-N_p ~ Phi photons per step. Everything therefore depends on the single combination
-Phi/Delta^2: the probe strength is ONE knob, and two ratios are fixed by the physics,
+Everything scales with the total photon scattering rate gamma_s:
+    beta      = eta_s * gamma_s                    tensor light shift (sign of eta_s = sign of the shift)
+    gamma_sf  = r_within * gamma_s                 within-F spin-flip channel L = sqrt(gamma_sf) J_+/J_- (v5/v6 channel)
+    K_L       = gamma_s * (a_L + c_L J_z^2)        loss-rate operator (Raman transfer out of F; diagonal in m)
+    sn_sd^2   = 1 / ((b/a)^2 * OD_res * N_a * dt * gamma_s)   Faraday shot noise (b/a = vector/scalar polarizability)
+Given the sweep variable beta the script derives gamma_s = beta/|eta_s| and the rest. Presets
+(--atom) hold (eta_s, r_within, a_L, c_L, b/a) for Cs F=3/4 on D1/D2 at large detuning; J is
+set to the preset's F. --od-res is the resonant optical depth N_a*sigma_res/A of the probe
+transition (sigma_res is the cross section that gives the far-detuned scattering rate
+Phi*sigma_res*(Gamma/2Delta)^2, roughly lambda^2/2pi for D1 and lambda^2/pi for D2).
 
-    beta / gamma            = eta                      (atomic figure of merit, as in v5),
-    gamma * sn_sd^2 * dt    = 1 / (OD_eff * N_a)       (readout back-action),
+The loss enters the Heisenberg-picture generator as D^dag[O] -= 1/2 {K_L, O} (no jump term), so
+tr(O rho_t) is the UNNORMALIZED signal: survival probability times the conditional expectation,
+i.e. exactly the collective Faraday signal if lost atoms are dark to the probe. (Atoms in F'
+are in fact not dark -- opposite-sign vector response, different light shift -- and that is the
+one remaining approximation of the light model.) The map stays w-independent, so fit residuals
+and the Fisher recursion are unchanged; the loss rate is known (set by beta) and not fitted.
 
-where OD_eff = N_a sigma_0/A times order-one factors (vector polarizability, spin-flip
-branching ratio) is the effective resonant optical depth of the sample, and dt is the
-interval per measurement (one measurement per Trotter step here). Given the sweep variable
-beta, the script therefore DERIVES per beta
-
-    gamma_array = beta / eta,
-    sn_sd_array = sqrt( eta / (OD_eff * N_a * dt * beta) ).
-
-A stronger probe (larger beta) gives more nonlinearity, more decoherence and LESS shot
-noise; beta -> 0 is no light at all (no decoherence but also no measurement, sn_sd -> inf),
-so beta = 0 is excluded from the sweep. The former constants G, N_p are absorbed into
-OD_eff; N_a stays as --n-atoms. Note that the v4/v5 shot-noise level sn_sd = 0.021 at
-eta = 30, OD_eff = 10 corresponds to beta ~ 33, i.e. a much stronger probe than any beta in
-the v5 sweep.
-
---tensor-scale (default 1) multiplies the J_z^2 term in the Hamiltonian ONLY, leaving the
-beam-derived gamma and sn_sd untouched: --tensor-scale 0 is the theoretical control
-experiment "same beam, but no nonlinearity", which isolates what the nonlinear dynamics
-contributes to the estimation.
-
-Dissipator, Trotter scheme, fit and Fisher machinery are those of v5 (spin-flip channel
-L = sqrt(gamma) J_+/J_-, exact <J_x>,<J_y> relaxation at gamma and <J_z> at 2*gamma; no
-loss channel). New outputs: sn_sd_array.npy (n_beta,), and cost_floor.npy is now
-(n_beta, n_time) because the noise floor differs per beta.
-
-Cramer-Rao bookkeeping (added after the onebeam_1 run): fisher.npy is the realization-averaged
-Fisher matrix E[F_i] and fisher_inv_trace.npy is tr inv(E[F_i]). Every realization has its own
-random control and is fitted on its own, so the variance such a per-realization estimator can
-reach, averaged over realizations, is bounded by E[inv(F_i)] >= inv(E[F_i]) (Jensen). With
-strong decoherence the information comes from a short window in which the particular control
-phases matter a lot, and the two differ by an order of magnitude (measured ~17x at beta = 20,
-~3.5x at beta = 5, ~2.4x at beta = 2 for eta = 30, OD = 10, T = 14). fisher_inv_realavg.npy
-(n_trials, n_beta, n_time, 3, 3) and fisher_inv_realavg_trace.npy therefore save E[inv(F_i)]
-and its trace; compare Monte Carlo covariances against THESE, not against inv(fisher).
+Outputs: gamma_s_array.npy (total scattering rate), gamma_sf_array.npy (spin-flip rate),
+loss_rate_scs_array.npy (<K_L> in the initial state), gamma_array.npy = gamma_sf + <K_L>_SCS
+(initial relaxation rate of <J_x>, the quantity earlier scripts called gamma; keeps the v6
+notebook usable), sn_sd_array.npy, cost_floor.npy (n_beta, n_time), plus everything v6 saves
+(including fisher_inv_realavg, the per-realization Cramer-Rao bound). --tensor-scale and
+--loss-scale multiply the J_z^2 term and K_L respectively (0 = off) for control runs; with
+--loss-scale 0 and --eta-s/--r-within/--b-over-a overrides the script reproduces v6 exactly.
 """
 import matplotlib.pyplot as plt
 import numpy as np
@@ -79,12 +62,18 @@ parser.add_argument("--t-stage-start", type=int, default=250, help="data-prefix 
 parser.add_argument("--n-jobs", type=int, default=-1, help="joblib worker count; lower it on RAM-limited machines (each worker holds a full scipy stack)")
 parser.add_argument("--n-trials", type=int, default=1, help="number of independent true-parameter (w_true) draws to run; statistics are averaged over these trials")
 parser.add_argument("--seed", type=int, default=3, help="seed for the run's RNG stream; vary this (e.g. per SLURM array task) to draw statistically independent trials across separate runs")
-parser.add_argument("--eta", type=float, required=True, help="atomic figure of merit eta = beta/gamma (tensor light shift over spin-flip scattering rate, ~ Delta_HF'/Gamma); each beta runs with gamma = beta/eta")
-parser.add_argument("--od", type=float, required=True, help="effective resonant optical depth OD_eff of the sample (N_a sigma_0/A up to order-one factors); sets the readout back-action gamma*sn_sd^2*dt = 1/(OD_eff*N_a)")
+parser.add_argument("--atom", type=str, required=True, choices=["Cs-D2-F3", "Cs-D2-F4", "Cs-D1-F3", "Cs-D1-F4"], help="atomic preset: (eta_s, r_within, a_L, c_L, b/a) from cs_light_shift_scattering_ratios.py at large detuning; sets J = F")
+parser.add_argument("--od-res", type=float, required=True, help="resonant optical depth N_a*sigma_res/A of the probe transition; sets the readout back-action gamma_s*sn_sd^2*dt = 1/((b/a)^2*OD_res*N_a)")
+parser.add_argument("--eta-s", type=float, default=None, help="override the preset beta/gamma_s (tensor shift per scattered photon; sign = sign of the shift)")
+parser.add_argument("--r-within", type=float, default=None, help="override the preset within-F spin-flip rate as a fraction of gamma_s")
+parser.add_argument("--loss-a", type=float, default=None, help="override the preset a_L (K_L = gamma_s*(a_L + c_L J_z^2))")
+parser.add_argument("--loss-c", type=float, default=None, help="override the preset c_L")
+parser.add_argument("--b-over-a", type=float, default=None, help="override the preset vector/scalar polarizability ratio b/a")
+parser.add_argument("--loss-scale", type=float, default=1.0, help="multiplies the loss operator K_L; 0 = no loss (v6 physics)")
 parser.add_argument("--n-atoms", type=float, default=2e5, help="number of atoms N_a in the product ensemble (the collective Faraday signal is N_a times the single-atom expectation)")
 parser.add_argument("--tensor-scale", type=float, default=1.0, help="multiplies the J_z^2 term in the Hamiltonian only; 0 = same beam (same gamma, same shot noise) but no nonlinearity, the control experiment")
 args = parser.parse_args()
-assert args.eta > 0 and args.od > 0 and args.n_atoms > 0, "--eta, --od and --n-atoms must be positive"
+assert args.od_res > 0 and args.n_atoms > 0, "--od-res and --n-atoms must be positive"
 assert all(b > 0 for b in args.betas), "every beta must be > 0: in the one-beam model beta = 0 is no light and no measurement"
 os.makedirs(args.outdir, exist_ok=True)
 
@@ -96,7 +85,20 @@ def H_c(phi=[], beta=1, omega=1, J=1):
 
 #Parameters
 rng = np.random.default_rng(args.seed)
-J = 3
+#Atomic presets from cs_light_shift_scattering_ratios.py (Steck matrix elements, pi-polarized probe, Delta = -20 GHz,
+#i.e. the far-detuned limit): eta_s = beta_code/gamma_s, r_within = within-F spin-flip rate / gamma_s,
+#(a_L, c_L) = loss-rate operator K_L/gamma_s = a_L + c_L m^2, b_over_a = vector/scalar polarizability ratio.
+ATOM_PRESETS = {
+    "Cs-D2-F3": dict(F=3, eta_s=7.37,   r_within=0.0055, a_L=0.204, c_L=0.0107, b_over_a=0.127),
+    "Cs-D2-F4": dict(F=4, eta_s=-9.55,  r_within=0.0052, a_L=0.130, c_L=0.0104, b_over_a=-0.123),
+    "Cs-D1-F3": dict(F=3, eta_s=-100.3, r_within=0.0110, a_L=0.412, c_L=0.0264, b_over_a=-0.243),
+    "Cs-D1-F4": dict(F=4, eta_s=122.0,  r_within=0.0115, a_L=0.254, c_L=0.0170, b_over_a=0.257),
+}
+atom = dict(ATOM_PRESETS[args.atom])
+for key, override in [("eta_s", args.eta_s), ("r_within", args.r_within), ("a_L", args.loss_a), ("c_L", args.loss_c), ("b_over_a", args.b_over_a)]:
+    if override is not None:
+        atom[key] = override
+J = atom["F"]
 dim = int(2*J+1)
 t_steps = args.t_steps
 delta_t = 0.001
@@ -119,16 +121,18 @@ measurement_steps = t_steps  # number of measurement points
 measurement_indices = np.linspace(0, t_steps, measurement_steps, dtype=int)
 beta_array = np.array(args.betas) #Array of beta values for different runs
 time_cutoffs_array = np.linspace(10, t_steps, num=args.n_cutoffs, dtype=int) #Step indices at which to truncate the fit, to see how parameter variance evolves over time
-#One-beam model (see module docstring): the probe strength beta fixes both the decoherence
-#rate and the readout shot noise. The former constants G = 8.9e-7, N_p = 9.6e8/measurement_steps
-#are absorbed into OD_eff; with them and N_a = 2e5 the v4/v5 value sn_sd = 0.021 is recovered
-#at beta = eta/(OD_eff*N_a*delta_t*sn_sd^2), e.g. beta ~ 33 for eta = 30, OD_eff = 10.
-eta = args.eta
-od_eff = args.od
+#One-beam model with loss (see module docstring): the probe strength beta fixes the total
+#scattering rate gamma_s and through it the spin-flip rate, the loss operator and the shot noise.
+eta_s = atom["eta_s"]
+tensor_sign = np.sign(eta_s) #sign of the physical tensor shift for this preset
+r_within, a_L, c_L, b_over_a = atom["r_within"], atom["a_L"], atom["c_L"], atom["b_over_a"]
+od_res = args.od_res
 n_atoms = args.n_atoms
 tensor_scale = args.tensor_scale
-gamma_array = beta_array / eta #per-beta spin-flip rate
-sn_sd_array = np.sqrt(eta / (od_eff * n_atoms * delta_t * beta_array)) #per-beta shot-noise standard deviation (one measurement per step of length delta_t)
+loss_scale = args.loss_scale
+gamma_s_array = beta_array / abs(eta_s) #per-beta total photon scattering rate
+gamma_sf_array = r_within * gamma_s_array #per-beta within-F spin-flip rate (the v5/v6 channel)
+sn_sd_array = np.sqrt(1.0 / (b_over_a**2 * od_res * n_atoms * delta_t * gamma_s_array)) #per-beta shot-noise standard deviation (one measurement per step of length delta_t)
 
 measure_mask = np.zeros(t_steps+1, dtype=bool) #Boolean lookup replacing 'i in measurement_indices' (an O(N) array scan per time step)
 measure_mask[measurement_indices[measurement_indices <= t_steps]] = True
@@ -175,25 +179,39 @@ def sprepost(X, Y):
     of O, i.e. sprepost(X, Y) @ O.reshape(-1) == (X @ O @ Y).reshape(-1)."""
     return np.kron(X, Y.T)
 
-def dissipator_adjoint_superop(gamma):
+def loss_operator(gamma_s):
+    """K_L = loss_scale * gamma_s * (a_L + c_L J_z^2): rate operator of Raman transfer out of the F
+    manifold (diagonal in m, even in m for a pi-polarized probe)."""
+    return loss_scale * gamma_s * (a_L * np.eye(dim) + c_L * J_z2)
+
+def dissipator_adjoint_superop(gamma_sf, gamma_s):
     """Matrix of the Heisenberg-picture (adjoint) dissipator
-        D^dag[O] = gamma * sum_{s=+,-} ( J_s^dag O J_s - 1/2 {J_s^dag J_s, O} )
-    on row-major vectorized operators. The jump set {J_+, J_-} is closed under ^dag, so the
-    adjoint map has the same form as the Schrodinger-picture one; D^dag[1] = 0 (unital,
-    trace preserving), and exactly D^dag[J_x] = -gamma J_x, D^dag[J_z] = -2 gamma J_z."""
+        D^dag[O] = gamma_sf * sum_{s=+,-} ( J_s^dag O J_s - 1/2 {J_s^dag J_s, O} )  -  1/2 {K_L, O}
+    on row-major vectorized operators. The spin-flip part is unital (D^dag[1] = 0, exactly
+    D^dag[J_x] = -gamma_sf J_x, D^dag[J_z] = -2 gamma_sf J_z). The loss part has no jump term
+    (the atom leaves the manifold), so D^dag[1] = -K_L and the trace of the state decays: with
+    the spin-flip channel off, the step map acts on the identity as exp(-delta_t K_L)."""
     d = J_x.shape[0]
     I = np.eye(d)
     K = J_minus @ J_plus + J_plus @ J_minus #= 2 (J_x^2 + J_y^2), Hermitian
-    return gamma * (sprepost(J_minus, J_plus) + sprepost(J_plus, J_minus)
-                    - 0.5 * sprepost(K, I) - 0.5 * sprepost(I, K))
+    K_L = loss_operator(gamma_s)
+    return (gamma_sf * (sprepost(J_minus, J_plus) + sprepost(J_plus, J_minus)
+                        - 0.5 * sprepost(K, I) - 0.5 * sprepost(I, K))
+            - 0.5 * sprepost(K_L, I) - 0.5 * sprepost(I, K_L))
 
-def dissipative_step_map(gamma):
+def dissipative_step_map(gamma_sf, gamma_s):
     """A = exp(delta_t * D^dag): the exact one-Trotter-step dissipative map, applied to the
-    vectorized observable between unitary steps. Returns None when gamma == 0 so the closed
-    system takes exactly the v4 code path."""
-    if gamma == 0:
+    vectorized observable between unitary steps. Returns None when both channels are off so
+    the closed system takes exactly the v4 code path."""
+    if gamma_sf == 0 and (gamma_s == 0 or loss_scale == 0):
         return None
-    return expm(delta_t * dissipator_adjoint_superop(gamma))
+    return expm(delta_t * dissipator_adjoint_superop(gamma_sf, gamma_s))
+
+#Initial relaxation rate of <J_x> in the spin coherent state: spin flips plus the loss rate
+#<K_L>_SCS. This is what v5/v6 called gamma (their only channel), saved as gamma_array.npy so the
+#v6 notebook's labels/floors keep working; 1/gamma_array is the useful coherence time.
+loss_rate_scs_array = np.array([np.real(np.trace(loss_operator(gs) @ in_state)) for gs in gamma_s_array])
+gamma_array = gamma_sf_array + loss_rate_scs_array
 
 def apply_map(A, O):
     """A @ vec(O) reshaped back to a matrix; identity when A is None."""
@@ -465,19 +483,20 @@ def compute_fisher_matrix(del_expect_x, del_expect_y, del_expect_z, t_cutoff, sn
     fisher_matrix[2, 1] = fisher_matrix[1, 2]
     return fisher_matrix
 
-def run_realization(w_true, beta_val, gamma_val, sn_sd, phi, gaussian_noise, w_starts, time_cutoffs):
+def run_realization(w_true, beta_val, gamma_sf_val, gamma_s_val, sn_sd, phi, gaussian_noise, w_starts, time_cutoffs):
     """One full noise+control realization, run entirely inside a joblib worker.
 
     phi is drawn fresh (in the main process, one draw per call) so every call gets its own
     control phase sequence -- and therefore its own U_c/U_c_dagger and its own noiseless
     trajectory -- rather than every realization in a beta sharing one fixed control sequence.
-    gamma_val = beta_val/eta and sn_sd = sqrt(eta/(OD_eff N_a dt beta_val)) are this beta's
-    decoherence rate and shot noise (one-beam model); the dissipative step map is built once
-    here (a dim^2 x dim^2 expm) and threaded through the trajectory, the fit residuals and the
-    Fisher derivatives. The J_z^2 term enters the Hamiltonian as beta_val*tensor_scale, so
-    --tensor-scale 0 keeps the beam (gamma, sn_sd) but removes the nonlinearity.
+    gamma_sf_val (spin flips), gamma_s_val (total scattering, sets the loss operator) and sn_sd
+    are this beta's beam-derived rates and shot noise; the dissipative step map (spin flips +
+    loss) is built once here (a dim^2 x dim^2 expm) and threaded through the trajectory, the fit
+    residuals and the Fisher derivatives. The J_z^2 term enters the Hamiltonian as
+    beta_val*tensor_sign*tensor_scale, so --tensor-scale 0 keeps the beam but removes the
+    nonlinearity.
     """
-    A = dissipative_step_map(gamma_val)
+    A = dissipative_step_map(gamma_sf_val, gamma_s_val)
     # phi (and therefore H_c) only takes n_phi_unique = ceil(t_steps/random_phase_steps) distinct
     # values -- see repeated_random_array -- so build U_c from the unique blocks and repeat,
     # instead of calling expm() once per step (a ~random_phase_steps-fold redundant
@@ -485,7 +504,7 @@ def run_realization(w_true, beta_val, gamma_val, sn_sd, phi, gaussian_noise, w_s
     # used for this run; the full per-step trace is reconstructable via
     # np.repeat(phi_unique, random_phase_steps)[:t_steps].
     phi_unique = phi[::random_phase_steps][:n_phi_unique]
-    H_c_unique = H_c(phi_unique, beta_val * tensor_scale, omega, J)
+    H_c_unique = H_c(phi_unique, beta_val * tensor_sign * tensor_scale, omega, J)
     U_c_unique = np.array([expm(-1j * delta_t * H_c_unique[i]) for i in range(n_phi_unique)])
     U_c = np.repeat(U_c_unique, random_phase_steps, axis=0)[:t_steps]
     U_c_dagger = np.ascontiguousarray(U_c.conj().transpose(0, 2, 1))
@@ -550,8 +569,8 @@ def run_all_betas(w_true):
         noise_batch = [rng.normal(0, sn_sd_array[b], measurement_steps) for b in beta_of_task] #shot noise is per beta in the one-beam model
         w_starts_batch = rng.uniform(-w_bound, w_bound, size=(n_tasks, n_time, n_extra_starts, 3))
         batch_results = Parallel(n_jobs=args.n_jobs)(
-            delayed(run_realization)(w_true=w_true, beta_val=beta_array[b], gamma_val=gamma_array[b], sn_sd=sn_sd_array[b],
-                                      phi=phi, gaussian_noise=n, w_starts=ws, time_cutoffs=time_cutoffs_array)
+            delayed(run_realization)(w_true=w_true, beta_val=beta_array[b], gamma_sf_val=gamma_sf_array[b], gamma_s_val=gamma_s_array[b],
+                                      sn_sd=sn_sd_array[b], phi=phi, gaussian_noise=n, w_starts=ws, time_cutoffs=time_cutoffs_array)
             for b, phi, n, ws in zip(beta_of_task, phi_batch, noise_batch, w_starts_batch)
         )
         #Unbiased cost at w_true: residuals(w_true) equal the injected noise exactly, so
@@ -704,11 +723,12 @@ averaged_results = {key: per_trial_results[key].mean(axis=0) for key in AVERAGED
 
 parameters = (
     f"Parameters: J = {J}, beta_array = {beta_array}, omega = {omega}, w_stdev = {w_stdev:.3f}, "
-    f"One-beam model: eta = beta/gamma = {eta}, OD_eff = {od_eff}, N_a = {n_atoms:g}, tensor_scale = {tensor_scale} "
-    f"(multiplies the J_z^2 term only); derived per beta: gamma_array = beta/eta = {gamma_array}, "
-    f"sn_sd_array = sqrt(eta/(OD_eff*N_a*delta_t*beta)) = {sn_sd_array} "
-    f"(spin-flip channel L = sqrt(gamma) J_+/J_-, transverse relaxation rate gamma, longitudinal 2*gamma; "
-    f"trace preserving, no loss channel; the readout IS the light-shift beam, its shot noise and back-action are tied by gamma*sn_sd^2*delta_t = 1/(OD_eff*N_a)), "
+    f"One-beam model with loss: atom = {args.atom} {atom}, OD_res = {od_res}, N_a = {n_atoms:g}, tensor_scale = {tensor_scale}, "
+    f"loss_scale = {loss_scale}; derived per beta: gamma_s (total scattering) = beta/|eta_s| = {gamma_s_array}, "
+    f"gamma_sf (spin flips) = r_within*gamma_s = {gamma_sf_array}, loss rate <K_L>_SCS = {loss_rate_scs_array}, "
+    f"gamma_array = gamma_sf + <K_L>_SCS = {gamma_array}, sn_sd_array = 1/sqrt((b/a)^2*OD_res*N_a*delta_t*gamma_s) = {sn_sd_array} "
+    f"(spin-flip channel L = sqrt(gamma_sf) J_+/J_-; loss K_L = gamma_s*(a_L + c_L J_z^2) as -1/2{{K_L, rho}}, trace decreasing, "
+    f"signal = survival x conditional expectation, lost atoms assumed dark; the readout IS the light-shift beam), "
     f"delta_t = {delta_t}, t_steps = {t_steps}, iter = {iter}, iter_save = {iter_save}, random_phase_steps = {random_phase_steps}, "
     f"measurement_steps = {measurement_steps}, time_cutoffs_array = {time_cutoffs_array}, "
     f"Staged fits: t_stage_start = {t_stage_start}, n_extra_starts = {n_extra_starts} (independent per checkpoint, anchor w = 0); "
@@ -720,7 +740,10 @@ parameters = (
     f"reconstruct the full per-step phase trace via np.repeat(phi_kept[...], random_phase_steps)[:t_steps]."
 )
 np.save(os.path.join(args.outdir, "beta_array.npy"), beta_array)
-np.save(os.path.join(args.outdir, "gamma_array.npy"), gamma_array) #per-beta decoherence rate
+np.save(os.path.join(args.outdir, "gamma_array.npy"), gamma_array) #per-beta initial relaxation rate of <J_x> (spin flips + loss)
+np.save(os.path.join(args.outdir, "gamma_s_array.npy"), gamma_s_array) #per-beta total photon scattering rate
+np.save(os.path.join(args.outdir, "gamma_sf_array.npy"), gamma_sf_array) #per-beta within-F spin-flip rate
+np.save(os.path.join(args.outdir, "loss_rate_scs_array.npy"), loss_rate_scs_array) #per-beta <K_L> in the initial state
 np.save(os.path.join(args.outdir, "sn_sd_array.npy"), sn_sd_array) #per-beta shot-noise standard deviation
 np.save(os.path.join(args.outdir, "time_cutoffs_array.npy"), time_cutoffs_array)
 np.save(os.path.join(args.outdir, "cost_floor.npy"), np.array([[cost_floor(tc, sd) for tc in time_cutoffs_array] for sd in sn_sd_array])) #shape (n_beta, n_time): the noise floor differs per beta
