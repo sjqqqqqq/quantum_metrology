@@ -2,6 +2,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,bm}
 \usepackage{physics}
+\usepackage{graphicx}
 \usepackage{hyperref}
 
 \newcommand{\Jx}{J_x}
@@ -359,13 +360,153 @@ $\mathrm{OD}_{\rm eff} = (b/a)^2\,\mathrm{OD}_{\rm res}/(R_{\rm tot}/\gamma_s)$,
 $0.07$ (D2, $F=3$) to $0.22$ (D1, $F=4$) of $\mathrm{OD}_{\rm res}$. The
 $\mathrm{OD}_{\rm eff} = 10$ of the first one-beam run therefore corresponds to
 $\mathrm{OD}_{\rm res} \approx 140$; a free-space cloud of $2\times10^5$ atoms in a 50\,$\mu$m
-beam has $\mathrm{OD}_{\rm res}$ of order 6--9, so both values are worth running.
+beam has $\mathrm{OD}_{\rm res}$ of order 6--9; both were run (Section~\ref{sec:results}).
 
 \paragraph{Cram\'er--Rao bookkeeping.} The simulation fits every realization on its own
 control sequence. The bound that such an estimator can reach, averaged over realizations,
 is $\mathbb{E}[F_i^{-1}]$, not $[\mathbb{E}F_i]^{-1}$ (Jensen); with strong decoherence
 the information comes from a short window in which the particular control phases matter,
 and the two differ by an order of magnitude (a factor 17 at $\beta = 20$, $\eta = 30$).
-Scripts v6 and v7 save both.
+Scripts v6 and v7 save both; the v7 runs confirm that the estimator reaches
+$\mathbb{E}[F_i^{-1}]$ to within a few per cent once its fits have converged (Section~\ref{sec:results}).
+
+
+\section{Results of the simulations}
+\label{sec:results}
+
+All runs use $J = 3$, observable $\Jy$, $T = 14/\Omega$, 300 fits per ($\beta$, cutoff) with 40
+cutoffs, and 20 independent draws of $\bm w_{\rm true}$ (one per cluster array task); statistics
+are averaged over the 20 draws. Fits whose least-squares cost lies above the $5\sigma$ chi-square
+band (a few per cent, converged to a local minimum) are dropped before variances are formed.
+``Variance'' below is the total filtered Monte Carlo variance $\mathrm{tr}\,\mathrm{Cov}(\hat{\bm w})$.
+
+\begin{center}
+\small
+\begin{tabular}{llllll}
+\hline
+run & script & light model & atom / $\eta$ & OD & $\beta$ \\
+\hline
+\texttt{decoherence\_1} & v5 & spin flips, separate readout & $\eta = 30$ & -- ($\sigma = 0.021$) & $0$--$5$ \\
+\texttt{onebeam\_1} & v6 & spin flips, one beam & $\eta = 30$ & $\mathrm{OD}_{\rm eff} = 10$ & $0.5$--$20$ \\
+\texttt{loss\_1} & v7 & loss + spin flips, one beam & Cs D2 $F=3$ & $\mathrm{OD}_{\rm res} = 140$ & $0.5$--$20$ \\
+\texttt{loss\_1\_od10} & v7 & same & same & $\mathrm{OD}_{\rm res} = 10$ & $0.5$--$20$ \\
+\texttt{*\_notensor} & v7 & same beam, $\Jz^2$ off & same & 140 and 10 & $0.5$--$20$ \\
+\hline
+\end{tabular}
+\end{center}
+
+\paragraph{v5, separate readout.} With $\beta = 0$ a decoherence-free closed system, strong
+nonlinearity wins only at short times: $\beta = 5$ reaches a variance of $10^{-2}$ at
+$\Omega t = 1.15$ against $1.52$ for $\beta = 0$, and $10^{-3}$ at $1.86$ against $2.23$, but
+its bound saturates at $\sim 10^{-5}$ while the closed system keeps improving, so for
+$T \gtrsim 4/\Omega$ the best $\beta$ is $0$. This is the $\beta_{\rm opt} \sim \eta/T$ picture,
+and it is the most pessimistic case for the nonlinear protocol because the reference carries no
+decoherence at all.
+
+\paragraph{v6, one beam.} With $\beta = 0$ excluded the optimum is finite at every $T$: by the
+bound the best $\beta$ steps $20 \to 10 \to 5 \to 2 \to 1 \to 0.5$ at
+$\Omega t = 0.5, 0.9, 1.3, 2.7, 6.7$. This run also exposed the Cram\'er--Rao bookkeeping issue of
+Section~\ref{sec:loss}: at $\beta \ge 5$ the Monte Carlo variance sat 20--50 times above
+$[\mathbb{E}F]^{-1}$ with no rejected fits and zero excess cost, which is not optimizer failure
+but the Jensen gap, $\mathbb{E}[F_i^{-1}]/\mathrm{tr}[\mathbb{E}F]^{-1} = 2.4, 3.5, 17$ at
+$\beta = 2, 5, 20$.
+
+\paragraph{v7, loss: the estimator reaches its bound.} In \texttt{loss\_1} the ratio of the
+Monte Carlo variance to $\mathrm{tr}\,\mathbb{E}[F_i^{-1}]$ at $T$ is $0.99$--$1.03$ for every
+$\beta$; the least-squares estimator with random control is efficient once its fits have converged
+(Fig.~\ref{fig:overview}). The tensor-off references are efficient at weak probe but sit above
+their own reachable bound at strong probe ($17\times$ at $\beta = 20$ for $\mathrm{OD}_{\rm res} =
+140$; $5$--$90\times$ for $\beta \ge 5$ at $\mathrm{OD}_{\rm res} = 10$), an identifiability
+problem of the purely linear dynamics that only makes the reference worse where the nonlinear
+run is already far ahead.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/v7_overview.pdf}
+\caption{Total filtered Monte Carlo variance (solid), reachable bound $\mathrm{tr}\,\mathbb{E}[F_i^{-1}]$
+(dashed) and naive bound $\mathrm{tr}\,[\mathbb{E}F]^{-1}$ (dotted) versus time for the four v7 runs.
+Left: with the $\Jz^2$ term; right: identical beam without it. Top: $\mathrm{OD}_{\rm res} = 140$;
+bottom: $10$.}
+\label{fig:overview}
+\end{figure}
+
+\paragraph{v7: the nonlinearity helps, and by a lot.} The tensor-off runs share seeds, decoherence
+and shot noise with the tensor-on runs, so the comparison is paired. Table~\ref{tab:ttt} gives, per
+run and target variance, the earliest time after which the variance stays below the target
+(minimized over $\beta$) and the $\beta$ that achieves it. Every target is reached three to four
+times sooner with the nonlinearity, at both optical depths.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccccc}
+\hline
+target $\mathrm{tr}\,\mathrm{Cov}$ & $10^{-2}$ & $10^{-3}$ & $10^{-4}$ & $10^{-5}$ & $10^{-6}$ \\
+\hline
+$\mathrm{OD}_{\rm res}=140$, $\Jz^2$ on  & $0.52$ ($\beta{=}20$) & $1.16$ ($20$) & $1.47$ ($20$) & $2.46$ ($10$) & $9.55$ ($2$) \\
+$\mathrm{OD}_{\rm res}=140$, $\Jz^2$ off & $2.13$ ($10$) & $3.28$ ($10$) & $4.27$ ($10$) & $5.69$ ($2$) & $11.21$ ($2$) \\
+$\mathrm{OD}_{\rm res}=10$, $\Jz^2$ on   & $1.09$ ($20$) & $2.06$ ($10$) & $2.85$ ($10$) & $11.99$ ($2$) & -- \\
+$\mathrm{OD}_{\rm res}=10$, $\Jz^2$ off  & $4.37$ ($5$) & $7.77$ ($2$) & $10.67$ ($1$) & $13.24$ ($2$) & -- \\
+\hline
+\end{tabular}
+\caption{Time ($\Omega t$) after which the total filtered variance stays below the target, best over
+$\beta$ (the optimal $\beta$ in parentheses); -- = not reached within $T = 14/\Omega$.}
+\label{tab:ttt}
+\end{table}
+
+At equal $\beta$ the ratio of variances with and without the $\Jz^2$ term (Fig.~\ref{fig:onoff})
+is $0.05$, $0.0015$ and $0.0013$ at $\Omega t = 2$ for $\beta = 5, 10, 20$
+($\mathrm{OD}_{\rm res} = 140$), still $0.35$ and $0.03$ at $\Omega t = 8$ for $\beta = 10, 20$,
+and $0.03$ at $T$ for $\beta = 20$; for $\beta \le 2$ it is $0.3$--$0.8$ throughout. The ratio of
+the reachable bounds tells the same story ($0.02$--$0.06$ at $\Omega t = 2$ for $\beta \ge 5$,
+$0.5$--$0.8$ at $T$) and is independent of $\mathrm{OD}$, since $\sigma^2$ is a common factor. The
+naive bound $[\mathbb{E}F]^{-1}$ says the opposite, a ratio of $1.2$--$2.9$ at $T$: the nonlinear
+dynamics make the information depend more strongly on the particular random control, which
+enlarges the Jensen gap and which a fixed-control bound cannot see. The mechanism is the one
+anticipated in Section~\ref{sec:onebeam}: the nonlinearity converts the probe into information
+faster, so a target precision is reached before the loss has eaten the signal. The best $\beta$
+by Monte Carlo falls with the time budget, $20$ up to $\Omega t \approx 2$, $10$ to $\approx 5$,
+$5$ to $\approx 9$, then $2$, in agreement with $\beta_{\rm opt} \sim \eta_{\rm tot}/T$ up to a
+prefactor.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/v7_tensor_on_off.pdf}
+\caption{Effect of the nonlinearity at fixed beam: ratio of the run with the $\Jz^2$ term to the run
+without it, versus time and per $\beta$. Solid: Monte Carlo variance; dashed: reachable bound;
+dotted: naive bound. Below 1 the nonlinearity helps.}
+\label{fig:onoff}
+\end{figure}
+
+\paragraph{v7: loss is the gentler decoherence.} \texttt{loss\_1} and \texttt{onebeam\_1} have the
+same $\beta$ list, the same nonlinearity per unit of initial signal relaxation
+($\eta_{\rm tot} \approx 30$) and shot noise equal to within 5\,\%. They differ only in what the
+scattering does to the atoms. With loss-dominated relaxation the variance at $T$ is lower by a
+factor $0.84$, $0.44$, $0.075$ at $\beta = 0.5, 1, 2$ and by three orders of magnitude at
+$\beta \ge 5$ (Fig.~\ref{fig:lossvssf}). Survivors keep evolving coherently and only the signal
+amplitude decays, so the strong-probe regime that looked hopeless under the spin-flip model is
+usable. Since loss is 97\,\% of the real relaxation for Cs, the v5/v6 picture overstated the cost
+of the probe by a large factor.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/v7_loss_vs_spinflip.pdf}
+\caption{Loss-dominated (v7, \texttt{loss\_1}) versus spin-flip-only (v6, \texttt{onebeam\_1})
+decoherence at the same beam: ratio of Monte Carlo variances (left) and of naive bounds (right).}
+\label{fig:lossvssf}
+\end{figure}
+
+\paragraph{v7: free-space optical depth.} At $\mathrm{OD}_{\rm res} = 10$ the shot noise is
+$3.7$ times larger and the variances at $T$ about ten times larger ($8\times10^{-6}$ against
+$6\times10^{-7}$ at $\beta = 1$); the tightest target is out of reach within the run, but the
+ordering of $\beta$ and the gain from the nonlinearity are unchanged (Table~\ref{tab:ttt}).
+
+\paragraph{What remains.} (i) Atoms transferred to $F'$ are treated as dark; they carry a vector
+response of opposite sign and a different light shift, and a faithful treatment needs the
+$F \oplus F'$ space. (ii) The tensor-off reference at strong probe does not reach its own bound;
+whether that is an optimizer or an identifiability limit of the linear dynamics is untested and
+does not affect the conclusions. (iii) Cs D1, $F = 4$ offers $\eta_{\rm tot} = 408$, twelve times
+more nonlinearity per unit of relaxation than the D2, $F = 3$ case run here, at the cost of
+$J = 4$. (iv) The runs fix $T$ and sweep $\beta$; the experimental question is the converse, the
+shortest $T$ for a required precision, which Table~\ref{tab:ttt} answers only on the $\beta$ grid.
 
 \end{document}
