@@ -1,0 +1,420 @@
+% Compile from this directory with:
+% latexmk -pdf -interaction=nonstopmode -halt-on-error sr_vector_magnetometry_model.tex
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=0.85in,headheight=14pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs,tabularx,array,microtype}
+\usepackage{enumitem,fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\id}{\mathbb{I}}
+\newcommand{\OD}{\mathrm{OD}}
+\newcommand{\dt}{\delta t}
+\newcommand{\Je}{J_{\epsilon}}
+\newcommand{\Jk}{J_k}
+\newcommand{\Sr}{${}^{88}\mathrm{Sr}$}
+\newcommand{\Ptwo}{${}^{3}P_2$}
+\newcommand{\Done}{${}^{3}D_1$}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlist[itemize]{leftmargin=1.4em,itemsep=3pt,topsep=3pt}
+\renewcommand{\arraystretch}{1.2}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Sr vector magnetometry}
+\fancyhead[R]{\small Model discussion, 27 September 2026}
+\fancyfoot[C]{\thepage}
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries Vector magnetometry with metastable strontium}\\[7pt]
+{\large Tensor control, probe-induced loss, and continuous readout}\\[6pt]
+{\small Discussion record based on the handwritten note of 26 September 2026}
+\end{center}
+
+\textbf{Status.} This document records the model discussion and its consistency
+checks. It proposes a starting model; it does not report a new simulation or an
+agreed implementation. The existing v7 simulation is unchanged.
+
+\section{Physical proposal and atomic data}
+
+Prepare an initially uncorrelated ensemble of \Sr\ atoms in the metastable
+\Ptwo\ manifold, with electronic angular momentum $J=2$ and five magnetic
+sublevels. An unknown magnetic field drives Larmor precession. A known magnetic
+control and the tensor light shift of a linearly polarized probe modify the
+spin dynamics. Faraday polarimetry of that same probe produces a continuous
+measurement record~\cite{note}.
+
+The probe is detuned from the ${}^{3}P_2\rightarrow{}^{3}D_1$ transition.
+Figure~1(c) of Ref.~\cite{masson} shows the relevant levels and decay paths;
+Table~II gives the following single-atom rates for \Sr.
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Decay channel & Wavelength (nm) & Partial rate ($\mathrm{s}^{-1}$)\\
+\midrule
+${}^{3}D_1\rightarrow{}^{3}P_0$ & 2600 & $2.8\times10^5$\\
+${}^{3}D_1\rightarrow{}^{3}P_1$ & 2740 & $1.8\times10^5$\\
+${}^{3}D_1\rightarrow{}^{3}P_2$ & 3070 & $8.8\times10^3$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Summing these channels gives
+\begin{align}
+\Gamma &=4.688\times10^5\ \mathrm{s}^{-1},
+& \frac{\Gamma}{2\pi}&\simeq74.6\ \mathrm{kHz},\label{eq:linewidth}\\
+b_{\mathrm{return}}&=\frac{8.8\times10^3}{\Gamma}\simeq0.01877,
+& b_{\mathrm{loss}}&\simeq0.98123.\label{eq:branching}
+\end{align}
+Thus about $98.12\%$ of scattering events leave the sensing manifold and
+$1.88\%$ return. This supports the note's loss-dominated approximation, with a
+small correction to its rounded statement of $99\%$ loss. ``Loss'' means loss
+from \Ptwo, not necessarily physical escape from the trap. Treating these atoms
+as dark also assumes negligible repumping and negligible response of the other
+manifolds at the chosen probe frequency.
+
+\textbf{Scope of the paper comparison.} We use the atomic structure and
+single-atom rates from Ref.~\cite{masson}. The magnetometry model considered here
+assumes independent atoms, without the collective radiative interactions and
+superradiance studied in that paper.
+
+\newpage
+\section{Coherent dynamics and parameter conventions}
+
+Set $\hbar=1$, so Hamiltonians have units of angular frequency. Let
+$\boldsymbol\epsilon$ be the real unit polarization vector of the probe and
+$\bm k$ its unit propagation direction. Define
+\begin{equation}
+\Je=\boldsymbol\epsilon\cdot\bm J,
+\qquad \Jk=\bm k\cdot\bm J,
+\qquad \boldsymbol\epsilon\cdot\bm k=0.
+\end{equation}
+The tensor shift acts along the polarization axis; Faraday rotation measures
+the spin along the propagation axis. For example, keeping the current code's
+tensor term $J_z^2$ and readout $J_y$ corresponds to
+$\boldsymbol\epsilon=\bm e_z$ and $\bm k=\bm e_y$. A readout of $J_z$ instead
+requires a transverse polarization and the corresponding tensor axis.
+
+Using the magnetic-field sign convention of the handwritten note,
+\begin{equation}
+\boxed{
+H(t)=-\bm\omega\cdot\bm J
++\Omega\bigl[\cos\phi(t)J_x+\sin\phi(t)J_y\bigr]
++\frac{\beta}{2J}\Je^2,
+\qquad J=2.
+}
+\label{eq:hamiltonian}
+\end{equation}
+Here $\bm\omega$ is the unknown Larmor-frequency vector, $\Omega$ is the known
+magnetic-control amplitude, and $\phi(t)$ is a prescribed control phase. The
+current v7 script uses $+\bm w\cdot\bm J$, so the conventions agree upon setting
+$\bm w=-\bm\omega$. This sign choice must be consistent in data generation,
+fitting, and conversion back to a magnetic field.
+
+For an isolated, weakly excited optical transition, define
+\begin{equation}
+\Delta_L=\omega_L-\omega_{eg},\qquad
+V_0=\frac{\Omega_L^2}{4\Delta_L},\qquad
+\gamma_0=\frac{\Omega_L^2\Gamma}{4\Delta_L^2}.
+\label{eq:scales}
+\end{equation}
+$\Omega_L$ is a reference optical Rabi frequency, distinct from $\Omega$.
+For the angular factors below, it is normalized so that the actual absorption
+Rabi frequency equals $\Omega_L$ times the corresponding Clebsch--Gordan
+coefficient. All detunings and Rabi frequencies use angular-frequency units;
+$\Gamma$ is the population decay rate in Eq.~\eqref{eq:linewidth}.
+
+The relation to the simulation's tensor parameter is
+\begin{equation}
+\boxed{
+\frac{\beta}{2J}=C^{(2)}V_0,
+\qquad
+\frac{\beta/(2J)}{\gamma_0}=C^{(2)}\frac{\Delta_L}{\Gamma}.
+}
+\label{eq:beta}
+\end{equation}
+For $C^{(2)}=-1/10$ and $J=2$, this gives
+$\beta=-\Omega_L^2/(10\Delta_L)$, or equivalently
+$\beta/\gamma_0=-(2/5)\Delta_L/\Gamma$.
+Here $\beta$ is signed. v7 instead sweeps a positive magnitude and applies the
+tensor sign separately through its atomic preset.
+
+\textbf{Two normalization cautions.} The coefficient multiplying $\Je^2$ is
+$\beta/(2J)$, not $\beta$. Also, $\gamma_0$ is a reference scattering-rate
+scale, not the actual state-independent photon-scattering rate. The latter
+requires the angular operator derived on the next page. The note's later
+scaling argument suppresses these angular factors; they must be restored for
+quantitative comparisons.
+
+\newpage
+\section{State-dependent loss and the tensor correction}
+
+The handwritten coefficients are read as
+\begin{equation}
+C^{(0)}=\frac15,\qquad C^{(2)}=-\frac1{10}.
+\end{equation}
+In the irreducible-tensor convention, the rank-two operator includes a trace
+subtraction~\cite{deutsch}. Therefore the absorption-strength operator is
+\begin{align}
+Q&=C^{(0)}\id+C^{(2)}
+\left(\Je^2-\frac{J(J+1)}{3}\id\right)\nonumber\\
+&=\frac15\id-\frac1{10}(\Je^2-2\id)
+=\boxed{\frac{4\id-\Je^2}{10}}.
+\label{eq:Q}
+\end{align}
+An independent angular-momentum check gives
+$Q_{mm}=|\langle 2,m;1,0\mid1,m\rangle|^2$. Explicitly,
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+$m_\epsilon$ & $-2$ & $-1$ & $0$ & $1$ & $2$\\
+\midrule
+$Q_{mm}$ & $0$ & $3/10$ & $2/5$ & $3/10$ & $0$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The literal expression $\id/5-\Je^2/10$ in the note would give negative loss
+rates for $m_\epsilon=\pm2$. The missing scalar contribution is essential.
+One may discard a common \emph{real energy shift} from $H$, but cannot discard
+a common decay term from its non-Hermitian part.
+
+\subsection*{Starting approximation: every scattering event is loss}
+Approximating the $98.12\%$ loss branch by unity gives
+\begin{equation}
+K=\gamma_0Q,\qquad
+H_{\mathrm{eff}}=H-\frac{i}{2}K,\qquad
+\boxed{\dot\rho=-i[H,\rho]-\frac12\{K,\rho\}.}
+\label{eq:loss}
+\end{equation}
+The density matrix here is unnormalized, with $\Tr\rho(0)=1$:
+\begin{equation}
+p(t)=\Tr\rho(t),\qquad
+\dot p(t)=-\gamma_0\Tr[Q\rho(t)].
+\label{eq:survival}
+\end{equation}
+It describes the surviving part of the ensemble after ignoring the outgoing
+states. Since $Q\ge0$, survival cannot increase. The instantaneous scattering
+rate per surviving atom is $\gamma_0\Tr(Q\rho/p)$ when $p>0$.
+
+\textbf{Physical consequence.} In the isolated-line approximation,
+$m_\epsilon=\pm2$ are dark to the linearly polarized probe. Magnetic dynamics
+can move population between dark and bright states, so survival generally is
+not a single exponential independent of the unknown field and control.
+
+\subsection*{Optional refinement: retain the small return branch}
+An explicit return model would add $\sum_a L_a\rho L_a^\dagger$ to
+Eq.~\eqref{eq:loss}, with
+$\sum_a L_a^\dagger L_a=b_{\mathrm{return}}\gamma_0Q$.
+The trace would then decrease at
+$b_{\mathrm{loss}}\gamma_0\Tr(Q\rho)$. The $L_a$ must be derived from the
+absorption and emission angular factors; v7's symmetric $J_\pm$ channels are
+not automatically the correct return model.
+
+\newpage
+\section{Measurement record, survival, and shot noise}
+
+Let $N_0$ be the initial atom number. Define the measurement strength $\kappa$
+operationally: in a time bin $\dt$, the calibrated collective-spin readout has
+shot-noise variance $1/(\kappa\dt)$. In the weak-backaction, shot-noise-dominated
+approximation, the record per initial atom is
+\begin{equation}
+\boxed{
+m_i=\Tr[\Jk\rho(t_i)]
++\frac{\xi_i}{N_0\sqrt{\kappa\dt}},
+\qquad \xi_i\overset{\mathrm{iid}}{\sim}\mathcal N(0,1).
+}
+\label{eq:record}
+\end{equation}
+This treats each bin as sufficiently short to use its instantaneous signal;
+otherwise the mean must be averaged across the bin. It models ensemble means
+with additive photon shot noise, omitting resolved atom-number fluctuations,
+projection noise, and measurement-induced collective correlations.
+
+\subsection*{Survival appears exactly once}
+Writing $\widetilde\rho=\rho/p$ for the normalized state of surviving atoms,
+\begin{equation}
+\Tr(\Jk\rho)=p(t)\Tr(\Jk\widetilde\rho).
+\end{equation}
+No additional survival factor belongs in Eq.~\eqref{eq:record}. Conversely,
+if we replace the loss operator by $K=\gamma_{\mathrm{loss}}\id$, then
+\begin{equation}
+m_i=e^{-\gamma_{\mathrm{loss}}t_i}
+\langle\Jk\rangle_{\mathrm{conditional},i}
++\frac{\xi_i}{N_0\sqrt{\kappa\dt}}.
+\label{eq:uniform-record}
+\end{equation}
+Page~3 of the handwritten note includes the exponential in the collective
+record $M(t_i)$ but omits it in $m(t_i)=M(t_i)/N$. Dividing by $N_0$ does not
+remove survival. Dividing instead by the surviving number $N_0p(t_i)$ would
+also amplify the noise by $1/p(t_i)$ and defines a different record.
+
+\subsection*{Measurement strength needs a Sr-specific calibration}
+For a fixed isolated transition and geometry, the expected scaling is
+\begin{equation}
+\kappa=q_{\mathrm{meas}}\frac{\sigma_{\mathrm{ref}}}{A}\gamma_0,
+\qquad
+\OD_0=\frac{N_0\sigma_{\mathrm{ref}}}{A},
+\qquad
+\operatorname{Var}(m_i)=
+\frac{1}{q_{\mathrm{meas}}N_0\OD_0\gamma_0\dt}.
+\label{eq:noise-scaling}
+\end{equation}
+Here $A$ is the beam mode area, $\sigma_{\mathrm{ref}}$ is a consistently
+defined reference cross section, and $q_{\mathrm{meas}}>0$ contains the vector
+polarizability, optical normalization, and detection efficiency. Its numerical
+value has not been derived in this discussion. Measurement strength involves
+the \emph{square} of the Faraday signal coupling; the note's prefactor written
+as $C^{(1)}$ needs its convention specified.
+
+The weak return branch also sets the dipole strength of the probed transition.
+A closed-two-level resonant cross section cannot be substituted without
+accounting for the branching and angular factors. The reference OD in
+Eq.~\eqref{eq:noise-scaling} should not be confused with an off-resonant
+absorption optical depth, which itself depends on detuning and state.
+
+For an initially uncorrelated spin coherent ensemble, an indicative
+weak-backaction condition is
+$\kappa T N_0 J/2\ll1$. Under Eq.~\eqref{eq:noise-scaling}, this becomes
+$q_{\mathrm{meas}}\OD_0\gamma_0 T J/2\ll1$, up to the evolving spin variance.
+The note's $\OD\gamma T\ll1$ is the corresponding scaling estimate.
+
+\newpage
+\section{Detuning, resources, and the estimation objective}
+
+The proposed additional control is the detuning dependence of
+Eq.~\eqref{eq:beta}. Writing probe intensity as $I_L$, the isolated-line
+scalings are
+\begin{equation}
+|\beta|\propto\frac{I_L}{|\Delta_L|},\qquad
+\gamma_0\propto\frac{I_L}{\Delta_L^2},\qquad
+\kappa\propto\gamma_0.
+\end{equation}
+Consequently, the effect of increasing $|\Delta_L|$ depends on which resource
+is held fixed:
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lYY@{}}
+\toprule
+Fixed quantity & Required intensity & Effect of larger detuning\\
+\midrule
+$I_L$ & Constant & Weaker tensor dynamics, less scattering, weaker readout.\\
+$|\beta|$ & $I_L\propto|\Delta_L|$ & Less scattering, but also weaker readout.\\
+$\gamma_0$ & $I_L\propto\Delta_L^2$ & Stronger tensor dynamics at fixed reference scattering and readout strength.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The last comparison directly tests whether extra nonlinear dynamics improves
+vector estimation at a fixed measurement-noise scale. With state-dependent
+loss, fixing $\gamma_0$ fixes the loss \emph{operator scale}; the actual
+survival trajectory can still change as the Hamiltonian changes. Increasing
+the tensor strength does not by itself prove a Fisher-information gain.
+
+These scalings require weak excitation and a sufficiently isolated transition,
+schematically
+\begin{equation}
+\Gamma,\ |\Omega_L|\ll|\Delta_L|
+\ll\text{separation to relevant neighboring optical lines}.
+\end{equation}
+At larger detunings, contributions from other excited manifolds must be
+included. Available laser power and acceptable heating also constrain an
+experimental detuning sweep. Arbitrarily large detuning is not a consequence
+of this reduced model.
+
+\subsection*{Accumulated information and useful measurement duration}
+For a fixed control and probe setting, let
+$\mu_i(\bm\omega)=\Tr[\Jk\rho(t_i;\bm\omega)]$ and let the known shot-noise
+variance be $\sigma_i^2$, independent of the unknown field. Then
+\begin{equation}
+F(T)=\sum_{t_i\le T}\frac{1}{\sigma_i^2}
+\bigl(\nabla_{\bm\omega}\mu_i\bigr)
+\bigl(\nabla_{\bm\omega}\mu_i\bigr)^{\mathsf T}.
+\label{eq:fisher}
+\end{equation}
+Each additional measurement contributes a positive semidefinite matrix.
+Accumulated information cannot decrease when a record is extended under
+otherwise identical conditions, although signal loss may make the gain very
+small. Where $F$ is invertible, the associated Cramer--Rao bound cannot worsen.
+
+A finite optimal duration can arise when optimizing information per total
+experimental time, including repeated preparation and dead time, or when
+jointly changing the probe settings at fixed duration. Thus
+$\gamma_{\mathrm{loss}}T\sim1$ is a useful heuristic timescale for uniform
+loss, not a general maximum of accumulated Fisher information. For vector
+estimation, a scalar objective such as $\Tr F^{-1}$ must also be specified.
+
+\newpage
+\section{Comparison with v7 and proposed next decisions}
+
+The current script is
+\path{multiparameter_trotter_v7_loss_least_squares_over_time.py}.
+Its loss generator already contains a term $-\{K_L,\rho\}/2$, with
+$K_L=\gamma_s(a_L\id+c_LJ_z^2)$, alongside within-manifold spin-flip channels.
+Thus the trace-decreasing formalism can be reused; the atomic coefficients,
+probe parametrization, and any return channels require a new model.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lYY@{}}
+\toprule
+Ingredient & Current v7 & Proposed Sr model\\
+\midrule
+Sensing manifold & Cs $F=3$ or $4$ & Sr $J=2$\\
+Irreversible dynamics & Spin flips and Raman loss & Dominant loss; optional $1.88\%$ return branch\\
+Tensor/scattering ratio & Fixed atomic preset & Detuning-dependent ratio\\
+Probe parameters & Sweep positive $\beta$ magnitude & Intensity and detuning set shift, scattering, and noise\\
+Loss geometry & Preset $a_L+c_LJ_z^2$ & $Q=(4\id-\Je^2)/10$\\
+Readout & Unnormalized signal plus shot noise & Same signal convention; Sr-specific optical calibration needed\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Recommended starting point, not yet an agreed choice.}
+Use Eqs.~\eqref{eq:hamiltonian}, \eqref{eq:scales}, \eqref{eq:beta},
+\eqref{eq:Q}, \eqref{eq:loss}, and \eqref{eq:record}. Retain state-dependent
+loss while initially treating all scattering as loss. Compare it with a
+uniform-loss model to determine whether state-selective survival changes the
+inferred metrological advantage. The five-dimensional spin space makes this
+comparison modest in size.
+
+The remaining decisions are:
+\begin{itemize}
+\item Retain state-dependent loss immediately, or start with a scalar
+approximation? If scalar, specify how its rate is calibrated: the isotropic
+average is $\Tr Q/5=1/5$, while an initial spin coherent state transverse to
+$\boldsymbol\epsilon$ has $\langle Q\rangle=3/10$.
+\item Choose polarization, propagation, initial spin, and control axes together.
+\item Derive the Faraday coefficient and cross-section normalization before
+assigning a numerical OD or shot-noise level.
+\item Specify the detuning/power constraint and the Fisher-information objective
+for the first comparison. Add the small return branch only when its effect is
+needed at the desired accuracy.
+\end{itemize}
+
+\begin{thebibliography}{9}
+\small
+\bibitem{note}
+IHD, handwritten note, \emph{Vector Magnetometry}, September 2026,
+pp.~1--3 (page~4 is blank).
+Repository file: \texttt{Vector Magnetometry - 20260926\_151513.pdf}.
+
+\bibitem{masson}
+S.~J.~Masson, J.~P.~Covey, S.~Will, and A.~Asenjo-Garcia,
+\emph{Dicke Superradiance in Ordered Arrays of Multilevel Atoms},
+PRX Quantum \textbf{5}, 010344 (2024), Fig.~1(c) and Table~II.
+\href{https://doi.org/10.1103/PRXQuantum.5.010344}{doi:10.1103/PRXQuantum.5.010344}.
+Repository file: \path{PRXQuantum.5.010344.pdf}.
+
+\bibitem{deutsch}
+I.~H.~Deutsch and P.~S.~Jessen,
+\emph{Quantum control and measurement of atomic spins in polarization
+spectroscopy}, Optics Communications \textbf{283}, 681--694 (2010).
+See Eq.~(14) for the tensor convention and Sec.~3.2.1 for measurement strength.
+\href{https://doi.org/10.1016/j.optcom.2009.10.059}{doi:10.1016/j.optcom.2009.10.059}.
+\end{thebibliography}
+
+\end{document}
