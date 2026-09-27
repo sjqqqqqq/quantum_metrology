@@ -12,11 +12,13 @@ import os
 import json
 
 
-def calibrate_probe(target_time, threshold, initial_variance, delta_t,
+def calibrate_probe(target_time, threshold, initial_variance, bin_width,
                     measurement_count, coupling, n_atoms):
-    """Calibrate B_initial(t) = threshold*t/target using a fixed photon flux.
+    """Calibrate B_initial(t) = threshold*(t + bin_width)/(target + bin_width) at a fixed photon flux.
 
-    Each actual measurement, including t=0, receives one nominal delta_t bin.
+    Each actual measurement, including t=0, receives one nominal bin of length
+    bin_width = duration/measurement_count; the t=0 bin is why the target carries
+    one extra bin, so B reaches threshold at t=target under the initial variance.
     Without a target, preserve the legacy total photon budget and arithmetic.
     """
     if target_time is None:
@@ -24,8 +26,8 @@ def calibrate_probe(target_time, threshold, initial_variance, delta_t,
     else:
         if initial_variance <= 0:
             raise ValueError("initial observable variance must be positive")
-        photon_flux = threshold / (coupling**2 * n_atoms * initial_variance * target_time)
-        photons_per_bin = photon_flux * delta_t
+        photon_flux = threshold / (coupling**2 * n_atoms * initial_variance * (target_time + bin_width))
+        photons_per_bin = photon_flux * bin_width
     shot_noise = 1 / (np.sqrt(photons_per_bin) * coupling * n_atoms)
     return photons_per_bin, shot_noise
 
@@ -170,9 +172,10 @@ else:
 in_state = spin_coherent(J, theta_scs, phi_scs, type = 'dm').full()
 initial_variance = float(np.real(np.trace(obs_0 @ obs_0 @ in_state))
                          - np.real(np.trace(obs_0 @ in_state))**2)
+bin_width = t_steps * delta_t / measurement_steps #Nominal record time per measurement (= delta_t while measurement_steps = t_steps)
 N_p, sn_sd = calibrate_probe(args.weak_target_time, args.weak_threshold, initial_variance,
-                            delta_t, measurement_steps, G, N_a)
-photon_flux = N_p / delta_t
+                            bin_width, measurement_steps, G, N_a)
+photon_flux = N_p / bin_width
 
 def commutator(A, B):
    """Compute the commutator [A, B] = AB - BA."""
@@ -593,6 +596,12 @@ def run_all_betas(w_true):
     runtime_array = np.full(n_beta, end_time - start_time)
 
     fisher_inv_realavg = fisher_inv_sum / iter
+    fisher_inv_realavg_trace = np.trace(fisher_inv_realavg, axis1=-2, axis2=-1)
+    #Weak-budget bound: F and B are both linear in the photon flux, so rescaling the flux per
+    #(beta, cutoff) until the realization-mean B equals weak_threshold multiplies inv(F) by
+    #B_mean/threshold. Flux-independent, so it charges each beta for the spin variance it creates.
+    backaction_mean = backaction.mean(axis=-1)
+    fisher_inv_realavg_trace_weak_budget = fisher_inv_realavg_trace * backaction_mean / args.weak_threshold
     fisher_inv_trace = np.trace(fisher_inv_array, axis1=2, axis2=3)
     fisher_inv_normalized = fisher_inv_array / fisher_inv_trace[..., None, None]
     cov_array_trace = np.trace(covar_array, axis1=2, axis2=3)
@@ -632,7 +641,9 @@ def run_all_betas(w_true):
         "fisher_mean_singular": fisher_mean_singular,
         "fisher_inv_array": fisher_inv_array,
         "fisher_inv_realavg": fisher_inv_realavg,
-        "fisher_inv_realavg_trace": np.trace(fisher_inv_realavg, axis1=-2, axis2=-1),
+        "fisher_inv_realavg_trace": fisher_inv_realavg_trace,
+        "backaction_mean": backaction_mean,
+        "fisher_inv_realavg_trace_weak_budget": fisher_inv_realavg_trace_weak_budget,
         "runtime_array": runtime_array,
         "fisher_inv_trace": fisher_inv_trace,
         "cov_array_trace": cov_array_trace,
@@ -665,12 +676,15 @@ FILE_NAME_MAP = {
     "weak_valid_fraction": "weak_valid_fraction", "fisher_singular": "fisher_singular",
     "fisher_mean_singular": "fisher_mean_singular", "fisher_inv_array": "fisher_inv",
     "fisher_inv_realavg": "fisher_inv_realavg", "fisher_inv_realavg_trace": "fisher_inv_realavg_trace",
+    "backaction_mean": "backaction_mean",
+    "fisher_inv_realavg_trace_weak_budget": "fisher_inv_realavg_trace_weak_budget",
 }
 AVERAGED_FIELDS = [
     "bias", "std_array", "covar_array", "fisher_array", "CRB_diff_eig",
     "max_cost_estimate", "min_cost_estimate", "cost_true", "accept_fraction",
     "runtime_array", "fisher_inv_trace", "cov_array_trace", "infidelity_values", "MSE",
     "weak_valid_fraction", "fisher_inv_array", "fisher_inv_realavg", "fisher_inv_realavg_trace",
+    "backaction_mean", "fisher_inv_realavg_trace_weak_budget",
 ]
 
 w_true_all = np.zeros((n_trials, 3))
@@ -722,11 +736,11 @@ probe_parameters = {
     "initial_variance": initial_variance, "G": G, "N_a": N_a,
     "photons_per_bin": N_p, "photon_flux": photon_flux,
     "total_photons": N_p * len(measurement_indices), "sn_sd": sn_sd, "sn_variance": sn_sd**2,
-    "delta_t": delta_t, "duration": t_steps * delta_t,
+    "delta_t": delta_t, "bin_width": bin_width, "duration": t_steps * delta_t,
     "measurement_count": len(measurement_indices),
     "measurement_indices_file": "measurement_indices.npy", "measurement_times_file": "measurement_times.npy",
     "time_units": "simulation units; omega=1; no physical seconds conversion specified",
-    "calibration": "B_initial(t) = G^2*N_a*photon_flux*initial_variance*t; one nominal delta_t bin per actual measurement, including t=0",
+    "calibration": "B_initial(t) = G^2*N_a*photon_flux*initial_variance*(t + bin_width), which equals weak_threshold at t = weak_target_time; one nominal bin_width bin per actual measurement, including t=0",
     "assumptions": ["ideal quantum-limited detection", "initially uncorrelated atoms",
                     "probe flux and beta are independent", "closed-system trajectory; diagnostic only"],
     "crossing_levels": [args.weak_threshold, 1.0],
@@ -734,6 +748,10 @@ probe_parameters = {
     "validity_rule": "B < level (equality is the first invalid bin)",
     "fisher_singularity_rule": "lambda_min <= 3*float64_eps*lambda_max, or inversion fails/nonfinite; inverse is NaN",
     "fisher_average_rule": "ordinary means over all realizations; singular inverses propagate NaN",
+    "weak_budget_rule": "fisher_inv_realavg_trace_weak_budget = fisher_inv_realavg_trace*backaction_mean/weak_threshold: "
+                        "the reachable bound if the probe flux were rescaled per beta and cutoff so the realization-mean B "
+                        "equals weak_threshold there; flux-independent, so legacy and weak calibrations agree to rounding for "
+                        "the same seed and weak_threshold",
     "axes": {
         "w_est_all": "trial,beta,time,realization,component",
         "cost_est_all/fit_success/backaction/weak_valid/unit_valid/fisher_singular": "trial,beta,time,realization (original draw order)",
@@ -742,6 +760,7 @@ probe_parameters = {
         "realization_ids_kept": "trial,beta,time,kept_fit; zero-based original realization IDs",
         "w_est/cost_est/phi_kept": "trial,beta,time,kept_fit,...",
         "fisher/fisher_inv/fisher_inv_realavg": "trial,beta,time,component,component",
+        "backaction_mean/fisher_inv_realavg_trace_weak_budget": "trial,beta,time",
     },
     "command_arguments": vars(args),
 }
