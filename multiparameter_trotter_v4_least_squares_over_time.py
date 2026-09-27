@@ -9,12 +9,74 @@ from scipy.linalg import sqrtm, inv, eigh, expm, expm_frechet
 import gc
 import argparse
 import os
+import json
+
+
+def calibrate_probe(target_time, threshold, initial_variance, delta_t,
+                    measurement_count, coupling, n_atoms):
+    """Calibrate B_initial(t) = threshold*t/target using a fixed photon flux.
+
+    Each actual measurement, including t=0, receives one nominal delta_t bin.
+    Without a target, preserve the legacy total photon budget and arithmetic.
+    """
+    if target_time is None:
+        photons_per_bin = 9.6e8 / measurement_count
+    else:
+        if initial_variance <= 0:
+            raise ValueError("initial observable variance must be positive")
+        photon_flux = threshold / (coupling**2 * n_atoms * initial_variance * target_time)
+        photons_per_bin = photon_flux * delta_t
+    shot_noise = 1 / (np.sqrt(photons_per_bin) * coupling * n_atoms)
+    return photons_per_bin, shot_noise
+
+
+def backaction_diagnostic(variances, measurement_indices, cutoffs, delta_t,
+                          n_atoms, shot_noise, threshold):
+    """Sample every actual bin; NaN crossings mean beyond the simulated record."""
+    variances = np.asarray(variances)
+    if not np.all(np.isfinite(variances)) or np.any(variances < -1e-10):
+        raise ValueError("nonfinite or materially negative observable variance")
+    # Remove only roundoff-level negative variances.
+    cumulative = np.cumsum(np.maximum(variances, 0) / (n_atoms * shot_noise**2))
+    counts = np.searchsorted(measurement_indices, cutoffs, side="right")
+    at_cutoffs = cumulative[counts - 1]
+    crossings = np.full(2, np.nan)
+    for j, level in enumerate((threshold, 1.0)):
+        hit = np.flatnonzero(cumulative >= level)
+        if hit.size:
+            crossings[j] = measurement_indices[hit[0]] * delta_t
+    return at_cutoffs, crossings, at_cutoffs < threshold, at_cutoffs < 1.0
+
+
+def invert_fisher(fisher):
+    """Flag unresolved directions at 3*eps*lambda_max; never regularize.
+
+    NaNs propagate through ordinary means, so a singular realization cannot be
+    silently omitted from E[F_i^-1]. Use the unchanged numpy inverse otherwise.
+    """
+    missing = np.full((3, 3), np.nan)
+    if not np.all(np.isfinite(fisher)):
+        return missing, True
+    eigenvalues = np.linalg.eigvalsh(fisher)
+    tolerance = 3 * np.finfo(float).eps * max(eigenvalues[-1], 0)
+    if eigenvalues[0] <= tolerance:
+        return missing, True
+    try:
+        inverse = np.linalg.inv(fisher)
+    except np.linalg.LinAlgError:
+        return missing, True
+    if not np.all(np.isfinite(inverse)):
+        return missing, True
+    return inverse, False
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--outdir", type=str, required=True)
 parser.add_argument("--t-steps", type=int, default=14000)
 parser.add_argument("--n-cutoffs", type=int, default=40, help="number of time cutoffs")
+parser.add_argument("--time-cutoffs", type=int, nargs="+", help="explicit increasing fit cutoffs in steps; overrides --n-cutoffs")
+parser.add_argument("--weak-target-time", type=float, help="initial coherent-state weak-window calibration in simulation time units; fixes photon flux")
+parser.add_argument("--weak-threshold", type=float, default=0.1, help="positive accumulated-backaction screening threshold (default: 0.1)")
 parser.add_argument("--iter", type=int, default=500, help="fits collected per beta per cutoff")
 parser.add_argument("--iter-save", type=int, default=None, help="lowest-cost fits kept per cutoff (default: keep all)")
 parser.add_argument("--batch-size", type=int, default=50)
@@ -25,6 +87,17 @@ parser.add_argument("--n-jobs", type=int, default=-1, help="joblib worker count;
 parser.add_argument("--n-trials", type=int, default=1, help="number of independent true-parameter (w_true) draws to run; statistics are averaged over these trials")
 parser.add_argument("--seed", type=int, default=3, help="seed for the run's RNG stream; vary this (e.g. per SLURM array task) to draw statistically independent trials across separate runs")
 args = parser.parse_args()
+if args.t_steps < 10 or args.n_cutoffs < 1 or args.t_stage_start < 1:
+    parser.error("t-steps must be >= 10; n-cutoffs and t-stage-start must be positive")
+if args.iter < 2 or args.batch_size < 1 or args.n_trials < 1 or args.n_extra_starts < 0:
+    parser.error("iter must be >= 2; batch-size/n-trials positive; n-extra-starts nonnegative")
+if args.time_cutoffs is not None and (any(tc < 1 or tc > args.t_steps for tc in args.time_cutoffs)
+                                    or any(a >= b for a, b in zip(args.time_cutoffs, args.time_cutoffs[1:]))):
+    parser.error("time-cutoffs must be strictly increasing steps in [1, t-steps]")
+if not np.isfinite(args.weak_threshold) or args.weak_threshold <= 0:
+    parser.error("weak-threshold must be finite and positive")
+if args.weak_target_time is not None and (not np.isfinite(args.weak_target_time) or args.weak_target_time <= 0):
+    parser.error("weak-target-time must be finite and positive")
 os.makedirs(args.outdir, exist_ok=True)
 
 # %%
@@ -57,11 +130,10 @@ random_phase_steps = 1000 #Number of random phase values to repeat
 measurement_steps = t_steps  # number of measurement points
 measurement_indices = np.linspace(0, t_steps, measurement_steps, dtype=int)
 beta_array = np.array(args.betas) #Array of beta values for different runs
-time_cutoffs_array = np.linspace(10, t_steps, num=args.n_cutoffs, dtype=int) #Step indices at which to truncate the fit, to see how parameter variance evolves over time
+time_cutoffs_array = (np.array(args.time_cutoffs, dtype=int) if args.time_cutoffs is not None
+                      else np.linspace(10, t_steps, num=args.n_cutoffs, dtype=int))
 G = 8.9e-7
 N_a = 2e5
-N_p = 9.6e8 / measurement_steps
-sn_sd = 1/(np.sqrt(N_p)*G*N_a) #Standard deviation of shot noise
 
 measure_mask = np.zeros(t_steps+1, dtype=bool) #Boolean lookup replacing 'i in measurement_indices' (an O(N) array scan per time step)
 measure_mask[measurement_indices[measurement_indices <= t_steps]] = True
@@ -96,6 +168,11 @@ else:
 
 #evolution_time = [t_step * delta_t for t_step in range(t_steps+1)]
 in_state = spin_coherent(J, theta_scs, phi_scs, type = 'dm').full()
+initial_variance = float(np.real(np.trace(obs_0 @ obs_0 @ in_state))
+                         - np.real(np.trace(obs_0 @ in_state))**2)
+N_p, sn_sd = calibrate_probe(args.weak_target_time, args.weak_threshold, initial_variance,
+                            delta_t, measurement_steps, G, N_a)
+photon_flux = N_p / delta_t
 
 def commutator(A, B):
    """Compute the commutator [A, B] = AB - BA."""
@@ -138,6 +215,7 @@ def compute_expectations(w, U_c, U_c_dagger):
     obs = obs_0
 
     expectation = []
+    variances = []
     del_expect_x = []
     del_expect_y = []
     del_expect_z = []
@@ -164,6 +242,7 @@ def compute_expectations(w, U_c, U_c_dagger):
         # Record only at measurement steps
         if measure_mask[i]:
             expectation.append(expect(obs, in_state))
+            variances.append(expect(obs @ obs, in_state) - expectation[-1]**2)
             del_expect_x.append(expect(del_obs_x, in_state))
             del_expect_y.append(expect(del_obs_y, in_state))
             del_expect_z.append(expect(del_obs_z, in_state))
@@ -189,7 +268,7 @@ def compute_expectations(w, U_c, U_c_dagger):
     return (np.array(expectation),
             np.array(del_expect_x),
             np.array(del_expect_y),
-            np.array(del_expect_z))
+            np.array(del_expect_z), np.array(variances))
 
 def residuals(w, M_vec, t_cutoff, U_c, U_c_dagger):
     """Residuals using only the evolution/measurements up to step t_cutoff (inclusive).
@@ -364,10 +443,12 @@ def run_realization(w_true, beta_val, phi, gaussian_noise, w_starts, time_cutoff
     U_c = np.repeat(U_c_unique, random_phase_steps, axis=0)[:t_steps]
     U_c_dagger = np.ascontiguousarray(U_c.conj().transpose(0, 2, 1))
 
-    expectation_true, del_expect_x, del_expect_y, del_expect_z = compute_expectations(w_true, U_c, U_c_dagger)
+    expectation_true, del_expect_x, del_expect_y, del_expect_z, variances = compute_expectations(w_true, U_c, U_c_dagger)
+    diagnostic = backaction_diagnostic(variances, measurement_indices, time_cutoffs,
+                                      delta_t, N_a, sn_sd, args.weak_threshold)
     fit_results = w_estimate_over_time(gaussian_noise, expectation_true, w_starts, time_cutoffs, U_c, U_c_dagger)
     fisher_matrices = [compute_fisher_matrix(del_expect_x, del_expect_y, del_expect_z, tc) for tc in time_cutoffs]
-    return fit_results, fisher_matrices, phi_unique
+    return fit_results, fisher_matrices, phi_unique, diagnostic
 
 def run_all_betas(w_true):
     """Run the full beta sweep for one true parameter vector w_true, returning a dict of all
@@ -399,6 +480,18 @@ def run_all_betas(w_true):
     accept_fraction = np.zeros((n_beta, n_time)) #QA metric: fraction of all collected fits within the chi-square band
     fit_success = np.zeros((n_beta, n_time, iter), dtype=bool) #least_squares success flag per fit
     w_est = np.zeros((n_beta, n_time, iter_save, 3))
+    w_est_all = np.zeros((n_beta, n_time, iter, 3))
+    cost_est_all = np.zeros((n_beta, n_time, iter))
+    phi_all = np.zeros((n_beta, iter, n_phi_unique))
+    realization_ids_kept = np.zeros((n_beta, n_time, iter_save), dtype=int)
+    backaction = np.zeros((n_beta, n_time, iter))
+    weak_valid = np.zeros_like(backaction, dtype=bool)
+    unit_valid = np.zeros_like(backaction, dtype=bool)
+    crossing_times = np.full((n_beta, iter, 2), np.nan)
+    fisher_singular = np.zeros((n_beta, n_time, iter), dtype=bool)
+    fisher_inv_sum = np.zeros((n_beta, n_time, 3, 3))
+    fisher_inv_array = np.zeros_like(fisher_array)
+    fisher_mean_singular = np.zeros((n_beta, n_time), dtype=bool)
     # phi_vals = np.array([3.65783195, 0.5914277 , 2.72141683, 3.00996808, 1.0036692 ,
     #    4.61548436, 0.71422237, 2.45815922, 3.24677432, 2.70571565,
     #    3.68696416, 4.63597154, 6.00840437, 1.78568858])
@@ -438,11 +531,17 @@ def run_all_betas(w_true):
                 cost_true_sum[b, j] += np.sum(noise_cumsq[task_mask, int(n_meas_cum[t_cutoff]) - 1])
             cost_true_count[b] += np.sum(task_mask)
 
-        for b, (res_list, fisher_list, phi_unique) in zip(beta_of_task, batch_results):
+        for b, (res_list, fisher_list, phi_unique, diagnostic) in zip(beta_of_task, batch_results):
+            realization_id = len(w_est_over_time[b][0])
+            backaction[b, :, realization_id], crossing_times[b, realization_id], weak_valid[b, :, realization_id], unit_valid[b, :, realization_id] = diagnostic
+            phi_all[b, realization_id] = phi_unique
             for j, res in enumerate(res_list):
                 w_est_over_time[b][j].append((res.x, res.cost, res.success, phi_unique))
             for j, fm in enumerate(fisher_list):
                 fisher_sum[b, j] += fm
+                inverse, singular = invert_fisher(fm)
+                fisher_inv_sum[b, j] += inverse
+                fisher_singular[b, j, realization_id] = singular
 
     cost_true = cost_true_sum / cost_true_count[:, None]
 
@@ -450,12 +549,15 @@ def run_all_betas(w_true):
         for j, t_cutoff in enumerate(time_cutoffs_array):
             all_costs = np.array([cost for w, cost, success, phi in w_est_over_time[b][j]])
             fit_success[b, j] = np.array([success for w, cost, success, phi in w_est_over_time[b][j]])
+            w_est_all[b, j] = np.array([entry[0] for entry in w_est_over_time[b][j]])
+            cost_est_all[b, j] = all_costs
             if iter_save < iter:
                 #Optional cost-based truncation (off by default: it biases the statistics)
                 order = np.argsort(all_costs)[:iter_save]
             else:
                 order = np.arange(iter) #Keep realization order so w_est[b, j, k] is realization k at every cutoff
             w_est[b, j] = np.array([w_est_over_time[b][j][i][0] for i in order])
+            realization_ids_kept[b, j] = order
             cost_est_kept[b, j] = all_costs[order]
             phi_kept[b, j] = np.array([w_est_over_time[b][j][i][3] for i in order])
             max_cost_estimate[b, j] = all_costs[order].max()
@@ -479,7 +581,9 @@ def run_all_betas(w_true):
             fisher_matrix = fisher_sum[b, j] / iter
             fisher_array[b, j] = fisher_matrix
 
-            CRB_diff_eig[b, j] = np.linalg.eigvals(covariance - np.linalg.inv(fisher_matrix))
+            fisher_inv_array[b, j], fisher_mean_singular[b, j] = invert_fisher(fisher_matrix)
+            CRB_diff_eig[b, j] = (np.full(3, np.nan) if fisher_mean_singular[b, j]
+                                else np.linalg.eigvals(covariance - fisher_inv_array[b, j]))
 
     end_time = t.time()
     #Betas now run concurrently within every batch (see docstring) rather than one after
@@ -488,13 +592,14 @@ def run_all_betas(w_true):
     #downstream scripts/plots.
     runtime_array = np.full(n_beta, end_time - start_time)
 
-    fisher_inv_array = np.linalg.inv(fisher_array)
+    fisher_inv_realavg = fisher_inv_sum / iter
     fisher_inv_trace = np.trace(fisher_inv_array, axis1=2, axis2=3)
     fisher_inv_normalized = fisher_inv_array / fisher_inv_trace[..., None, None]
     cov_array_trace = np.trace(covar_array, axis1=2, axis2=3)
     cov_array_normalized = covar_array / cov_array_trace[..., None, None]
     infidelity_values = np.array([
-        [1 - fidelity(fisher_inv_normalized[b, j], cov_array_normalized[b, j]) for j in range(n_time)]
+        [1 - fidelity(fisher_inv_normalized[b, j], cov_array_normalized[b, j])
+         if not fisher_mean_singular[b, j] else np.nan for j in range(n_time)]
         for b in range(n_beta)
     ])
     MSE = bias**2 + std_array #std_array holds variances (diag of the covariance), so this is bias^2 + Var
@@ -514,6 +619,20 @@ def run_all_betas(w_true):
         "accept_fraction": accept_fraction,
         "fit_success": fit_success,
         "w_est": w_est,
+        "w_est_all": w_est_all,
+        "cost_est_all": cost_est_all,
+        "phi_all": phi_all,
+        "realization_ids_kept": realization_ids_kept,
+        "backaction": backaction,
+        "crossing_times": crossing_times,
+        "weak_valid": weak_valid,
+        "unit_valid": unit_valid,
+        "weak_valid_fraction": weak_valid.mean(axis=-1),
+        "fisher_singular": fisher_singular,
+        "fisher_mean_singular": fisher_mean_singular,
+        "fisher_inv_array": fisher_inv_array,
+        "fisher_inv_realavg": fisher_inv_realavg,
+        "fisher_inv_realavg_trace": np.trace(fisher_inv_realavg, axis1=-2, axis2=-1),
         "runtime_array": runtime_array,
         "fisher_inv_trace": fisher_inv_trace,
         "cov_array_trace": cov_array_trace,
@@ -540,11 +659,18 @@ FILE_NAME_MAP = {
     "fit_success": "fit_success", "w_est": "w_est", "runtime_array": "runtime",
     "fisher_inv_trace": "fisher_inv_trace", "cov_array_trace": "covar_trace",
     "infidelity_values": "infidelity", "MSE": "MSE",
+    "w_est_all": "w_est_all", "cost_est_all": "cost_est_all", "phi_all": "phi_all",
+    "realization_ids_kept": "realization_ids_kept", "backaction": "backaction",
+    "crossing_times": "crossing_times", "weak_valid": "weak_valid", "unit_valid": "unit_valid",
+    "weak_valid_fraction": "weak_valid_fraction", "fisher_singular": "fisher_singular",
+    "fisher_mean_singular": "fisher_mean_singular", "fisher_inv_array": "fisher_inv",
+    "fisher_inv_realavg": "fisher_inv_realavg", "fisher_inv_realavg_trace": "fisher_inv_realavg_trace",
 }
 AVERAGED_FIELDS = [
     "bias", "std_array", "covar_array", "fisher_array", "CRB_diff_eig",
     "max_cost_estimate", "min_cost_estimate", "cost_true", "accept_fraction",
     "runtime_array", "fisher_inv_trace", "cov_array_trace", "infidelity_values", "MSE",
+    "weak_valid_fraction", "fisher_inv_array", "fisher_inv_realavg", "fisher_inv_realavg_trace",
 ]
 
 w_true_all = np.zeros((n_trials, 3))
@@ -582,6 +708,51 @@ np.save(os.path.join(args.outdir, "time_cutoffs_array.npy"), time_cutoffs_array)
 np.save(os.path.join(args.outdir, "cost_floor.npy"), np.array([cost_floor(tc) for tc in time_cutoffs_array]))
 np.save(os.path.join(args.outdir, "w_true.npy"), w_true_all) #shape (n_trials, 3)
 np.save(os.path.join(args.outdir, "random_phase_steps.npy"), np.array(random_phase_steps)) #needed to reconstruct full phi from phi_kept
+np.save(os.path.join(args.outdir, "measurement_indices.npy"), measurement_indices)
+np.save(os.path.join(args.outdir, "measurement_times.npy"), measurement_indices * delta_t)
+np.save(os.path.join(args.outdir, "sn_sd.npy"), np.array(sn_sd))
+np.save(os.path.join(args.outdir, "crossing_levels.npy"), np.array([args.weak_threshold, 1.0]))
+
+probe_parameters = {
+    "schema_version": 1,
+    "probe_mode": "legacy_total_photons" if args.weak_target_time is None else "fixed_photon_flux",
+    "weak_target_time": args.weak_target_time,
+    "weak_threshold": args.weak_threshold,
+    "J": J, "initial_observable": obs_0_string, "theta_scs": theta_scs, "phi_scs": phi_scs,
+    "initial_variance": initial_variance, "G": G, "N_a": N_a,
+    "photons_per_bin": N_p, "photon_flux": photon_flux,
+    "total_photons": N_p * len(measurement_indices), "sn_sd": sn_sd, "sn_variance": sn_sd**2,
+    "delta_t": delta_t, "duration": t_steps * delta_t,
+    "measurement_count": len(measurement_indices),
+    "measurement_indices_file": "measurement_indices.npy", "measurement_times_file": "measurement_times.npy",
+    "time_units": "simulation units; omega=1; no physical seconds conversion specified",
+    "calibration": "B_initial(t) = G^2*N_a*photon_flux*initial_variance*t; one nominal delta_t bin per actual measurement, including t=0",
+    "assumptions": ["ideal quantum-limited detection", "initially uncorrelated atoms",
+                    "probe flux and beta are independent", "closed-system trajectory; diagnostic only"],
+    "crossing_levels": [args.weak_threshold, 1.0],
+    "crossing_rule": "first sampled B >= level; NaN means beyond the simulated record; no interpolation or extrapolation",
+    "validity_rule": "B < level (equality is the first invalid bin)",
+    "fisher_singularity_rule": "lambda_min <= 3*float64_eps*lambda_max, or inversion fails/nonfinite; inverse is NaN",
+    "fisher_average_rule": "ordinary means over all realizations; singular inverses propagate NaN",
+    "axes": {
+        "w_est_all": "trial,beta,time,realization,component",
+        "cost_est_all/fit_success/backaction/weak_valid/unit_valid/fisher_singular": "trial,beta,time,realization (original draw order)",
+        "crossing_times": "trial,beta,realization,level (weak threshold then 1)",
+        "phi_all": "trial,beta,realization,phase_block",
+        "realization_ids_kept": "trial,beta,time,kept_fit; zero-based original realization IDs",
+        "w_est/cost_est/phi_kept": "trial,beta,time,kept_fit,...",
+        "fisher/fisher_inv/fisher_inv_realavg": "trial,beta,time,component,component",
+    },
+    "command_arguments": vars(args),
+}
+with open(os.path.join(args.outdir, "probe_parameters.json"), "w") as f:
+    json.dump(probe_parameters, f, indent=2, allow_nan=False)
+parameters += (f"\nExact probe metadata: probe_parameters.json; G={G!r}, N_a={N_a!r}, "
+               f"N_p={N_p!r}, photon_flux={photon_flux!r}, sn_sd={sn_sd!r}, "
+               f"weak_target_time={args.weak_target_time!r}, weak_threshold={args.weak_threshold!r}. "
+               "Diagnostics use all measurement bins including time zero; NaN crossing times mean "
+               "beyond the simulated record. w_est_all/cost_est_all retain every fit; "
+               "realization_ids_kept maps optional cost selection back to original draw order.\n")
 
 #Full per-trial data, shape (n_trials, n_beta, n_time, ...) -- n_trials=1 keeps the array
 #shape from a single extra leading axis of size 1 relative to the pre-multi-trial version.
@@ -599,6 +770,3 @@ with open(os.path.join(args.outdir, "parameters.txt"), "w") as f:
 
 
 # %%
-
-
-
