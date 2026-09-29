@@ -385,20 +385,40 @@ def w_estimate_staged(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_d
         w = result.x
     return result
 
+def w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger):
+    """Lower-cost of the staged fit and a direct full-length fit, both started at w0.
+
+    At weak-probe noise (sn_sd ~ 1) the first stages carry almost no information, so the
+    staged chain leaves the true basin even when started at w_true, and the wrong minimum
+    can sit inside the chi-square band so no retry fires. On the staged-only weak run
+    (data_mle_over_time_weak_1, not kept; reproducible from commit 8634fca with the
+    weak_2 settings) the true-basin minimum had the lower cost in 216 of 222 such fits and
+    a direct fit from w = 0 found it in 208; staging still rescues the long-record cases
+    where a direct fit alone falls into a local minimum. Ties keep the staged fit; result.direct records
+    whether the direct candidate won.
+    """
+    staged = w_estimate_staged(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
+    staged.direct = False
+    if t_cutoff <= t_stage_start: #Single stage: the staged fit already is the direct fit
+        return staged
+    direct = w_estimate_linearized(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
+    direct.direct = True
+    return direct if direct.cost < staged.cost else staged
+
 def w_estimate_over_time(gaussian_noise, expectation_true, w_starts, time_cutoffs, U_c, U_c_dagger):
     """Fit w at each time cutoff independently for a single noise realization.
 
-    Each cutoff runs the staged fit anchored at w = 0; if the final cost fails the
-    chi-square acceptance test (i.e. the optimizer provably missed the global
-    minimum), retry from the pre-drawn random starts in w_starts[j] (each through the
-    same staged schedule) and keep the lowest-cost result.
+    Each cutoff fits from w = 0 both staged and directly (w_estimate_start); if the lower
+    cost fails the chi-square acceptance test (i.e. the optimizer provably missed the
+    global minimum), retry from the pre-drawn random starts in w_starts[j] (each fit the
+    same two ways) and keep the lowest-cost result.
     """
     out = []
     for j, t_cutoff in enumerate(time_cutoffs):
-        best = w_estimate_staged(gaussian_noise, expectation_true, np.zeros(3), t_cutoff, U_c, U_c_dagger)
+        best = w_estimate_start(gaussian_noise, expectation_true, np.zeros(3), t_cutoff, U_c, U_c_dagger)
         if best.cost > cost_accept_threshold(t_cutoff):
             for w0 in w_starts[j]:
-                res = w_estimate_staged(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
+                res = w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
                 if res.cost < best.cost:
                     best = res
         out.append(best)
@@ -482,6 +502,7 @@ def run_all_betas(w_true):
     phi_kept = np.zeros((n_beta, n_time, iter_save, n_phi_unique))
     accept_fraction = np.zeros((n_beta, n_time)) #QA metric: fraction of all collected fits within the chi-square band
     fit_success = np.zeros((n_beta, n_time, iter), dtype=bool) #least_squares success flag per fit
+    fit_direct = np.zeros((n_beta, n_time, iter), dtype=bool) #True where the direct full-length fit beat the staged fit
     w_est = np.zeros((n_beta, n_time, iter_save, 3))
     w_est_all = np.zeros((n_beta, n_time, iter, 3))
     cost_est_all = np.zeros((n_beta, n_time, iter))
@@ -539,7 +560,7 @@ def run_all_betas(w_true):
             backaction[b, :, realization_id], crossing_times[b, realization_id], weak_valid[b, :, realization_id], unit_valid[b, :, realization_id] = diagnostic
             phi_all[b, realization_id] = phi_unique
             for j, res in enumerate(res_list):
-                w_est_over_time[b][j].append((res.x, res.cost, res.success, phi_unique))
+                w_est_over_time[b][j].append((res.x, res.cost, res.success, phi_unique, res.direct))
             for j, fm in enumerate(fisher_list):
                 fisher_sum[b, j] += fm
                 inverse, singular = invert_fisher(fm)
@@ -550,8 +571,9 @@ def run_all_betas(w_true):
 
     for b in range(n_beta):
         for j, t_cutoff in enumerate(time_cutoffs_array):
-            all_costs = np.array([cost for w, cost, success, phi in w_est_over_time[b][j]])
-            fit_success[b, j] = np.array([success for w, cost, success, phi in w_est_over_time[b][j]])
+            all_costs = np.array([cost for w, cost, success, phi, direct in w_est_over_time[b][j]])
+            fit_success[b, j] = np.array([success for w, cost, success, phi, direct in w_est_over_time[b][j]])
+            fit_direct[b, j] = np.array([direct for w, cost, success, phi, direct in w_est_over_time[b][j]])
             w_est_all[b, j] = np.array([entry[0] for entry in w_est_over_time[b][j]])
             cost_est_all[b, j] = all_costs
             if iter_save < iter:
@@ -627,6 +649,7 @@ def run_all_betas(w_true):
         "phi_kept": phi_kept,
         "accept_fraction": accept_fraction,
         "fit_success": fit_success,
+        "fit_direct": fit_direct,
         "w_est": w_est,
         "w_est_all": w_est_all,
         "cost_est_all": cost_est_all,
@@ -667,7 +690,7 @@ FILE_NAME_MAP = {
     "max_cost_estimate": "max_cost_estimate", "min_cost_estimate": "min_cost_estimate",
     "cost_true": "cost_true", "cost_est_kept": "cost_est", "phi_kept": "phi_kept",
     "accept_fraction": "accept_fraction",
-    "fit_success": "fit_success", "w_est": "w_est", "runtime_array": "runtime",
+    "fit_success": "fit_success", "fit_direct": "fit_direct", "w_est": "w_est", "runtime_array": "runtime",
     "fisher_inv_trace": "fisher_inv_trace", "cov_array_trace": "covar_trace",
     "infidelity_values": "infidelity", "MSE": "MSE",
     "w_est_all": "w_est_all", "cost_est_all": "cost_est_all", "phi_all": "phi_all",
@@ -709,7 +732,7 @@ parameters = (
     f"Parameters: J = {J}, beta_array = {beta_array}, omega = {omega}, w_stdev = {w_stdev:.3f}, sn_sd = {sn_sd:.3f}, "
     f"delta_t = {delta_t}, t_steps = {t_steps}, iter = {iter}, iter_save = {iter_save}, random_phase_steps = {random_phase_steps}, "
     f"measurement_steps = {measurement_steps}, time_cutoffs_array = {time_cutoffs_array}, "
-    f"Staged fits: t_stage_start = {t_stage_start}, n_extra_starts = {n_extra_starts} (independent per checkpoint, anchor w = 0); "
+    f"Fits: lower cost of staged (t_stage_start = {t_stage_start}) and direct full-length fit per start, n_extra_starts = {n_extra_starts} (independent per checkpoint, anchor w = 0; fit_direct.npy flags direct wins); "
     f"Initial state: theta_scs = {theta_scs:.3f}, phi_scs = {phi_scs:.3f}; Initial observable = {obs_0_string}; "
     f"n_trials = {n_trials} true-parameter draws (see w_true.npy, shape (n_trials, 3)); a fresh control "
     f"phase sequence phi is drawn independently for every fit realization (every call to run_realization); "
@@ -748,13 +771,17 @@ probe_parameters = {
     "validity_rule": "B < level (equality is the first invalid bin)",
     "fisher_singularity_rule": "lambda_min <= 3*float64_eps*lambda_max, or inversion fails/nonfinite; inverse is NaN",
     "fisher_average_rule": "ordinary means over all realizations; singular inverses propagate NaN",
+    "fit_rule": "each start (w = 0, then the n_extra_starts random starts if the best cost exceeds the 5-sigma "
+                "chi-square band) is fit both staged (doubling prefixes from t_stage_start) and directly on the full "
+                "cutoff; the lowest cost is kept; fit_direct flags fits won by a direct candidate, including wins "
+                "at optimizer tolerance within the same minimum",
     "weak_budget_rule": "fisher_inv_realavg_trace_weak_budget = fisher_inv_realavg_trace*backaction_mean/weak_threshold: "
                         "the reachable bound if the probe flux were rescaled per beta and cutoff so the realization-mean B "
                         "equals weak_threshold there; flux-independent, so legacy and weak calibrations agree to rounding for "
                         "the same seed and weak_threshold",
     "axes": {
         "w_est_all": "trial,beta,time,realization,component",
-        "cost_est_all/fit_success/backaction/weak_valid/unit_valid/fisher_singular": "trial,beta,time,realization (original draw order)",
+        "cost_est_all/fit_success/fit_direct/backaction/weak_valid/unit_valid/fisher_singular": "trial,beta,time,realization (original draw order)",
         "crossing_times": "trial,beta,realization,level (weak threshold then 1)",
         "phi_all": "trial,beta,realization,phase_block",
         "realization_ids_kept": "trial,beta,time,kept_fit; zero-based original realization IDs",
