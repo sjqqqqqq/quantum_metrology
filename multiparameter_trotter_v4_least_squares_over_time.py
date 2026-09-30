@@ -83,7 +83,7 @@ parser.add_argument("--iter", type=int, default=500, help="fits collected per be
 parser.add_argument("--iter-save", type=int, default=None, help="lowest-cost fits kept per cutoff (default: keep all)")
 parser.add_argument("--batch-size", type=int, default=50)
 parser.add_argument("--betas", type=float, nargs="+", default=[0, 0.1, 1, 10])
-parser.add_argument("--n-extra-starts", type=int, default=2, help="random retries per cutoff when the staged fit fails the chi-square test")
+parser.add_argument("--n-extra-starts", type=int, default=2, help="random starts evaluated at every cutoff in addition to w = 0 (default: 2)")
 parser.add_argument("--t-stage-start", type=int, default=250, help="data-prefix length of the first annealing stage")
 parser.add_argument("--n-jobs", type=int, default=-1, help="joblib worker count; lower it on RAM-limited machines (each worker holds a full scipy stack)")
 parser.add_argument("--n-trials", type=int, default=1, help="number of independent true-parameter (w_true) draws to run; statistics are averaged over these trials")
@@ -122,7 +122,7 @@ w_init = [0,0,0] #Initial guess for parameters
 batch_size = args.batch_size #Number of parallel optimizations
 iter = args.iter #Total number of optimization iterations
 #Keep ALL fits by default: cost-based subselection biases the mean/covariance and the CRB
-#comparison. Optimizer failures are tracked via accept_fraction instead of being discarded.
+#comparison. The cost-band diagnostic accept_fraction never discards fits or certifies convergence.
 iter_save = args.iter_save if args.iter_save is not None else args.iter
 assert 0 < iter_save <= iter, "iter_save must be in (0, iter]"
 assert iter % batch_size == 0, "iter must be a multiple of batch_size"
@@ -146,7 +146,7 @@ def cost_floor(t_cutoff):
     return 0.5 * sn_sd**2 * n_meas_cum[t_cutoff]
 
 def cost_accept_threshold(t_cutoff, k=5.0):
-    """Upper k-sigma chi-square band around cost_floor; a fit whose cost lies above it converged to a local minimum."""
+    """Upper k-sigma noise-cost band; diagnostic only, not a global-convergence test."""
     n = n_meas_cum[t_cutoff]
     return 0.5 * sn_sd**2 * (n + k*np.sqrt(2.0*n))
 theta_scs = np.pi/2 #Initial spin coherent state parameters
@@ -358,8 +358,20 @@ def w_estimate_linearized(gaussian_noise, expectation_true, w_init, t_cutoff, U_
     M_vec = expectation_true[:n_sub] + gaussian_noise[:n_sub]
     #J_matrix = np.vstack((del_expect_x, del_expect_y, del_expect_z)).transpose()
     #w_estimate = w_init + inv(J_matrix.transpose() @ J_matrix) @ J_matrix.transpose() @ (M_vec - expectation)
-    result = least_squares(residuals, x0 = w_init, args=(M_vec, t_cutoff, U_c, U_c_dagger), method='trf', bounds =(-w_bound, w_bound))
+    residual_calls = 0
+
+    def counted_residuals(w, *residual_args):
+        nonlocal residual_calls
+        residual_calls += 1 #Includes finite-difference Jacobian evaluations, unlike result.nfev.
+        return residuals(w, *residual_args)
+
+    result = least_squares(counted_residuals, x0 = w_init, args=(M_vec, t_cutoff, U_c, U_c_dagger), method='trf', bounds =(-w_bound, w_bound))
+    result.residual_calls = residual_calls
     return result
+
+def is_finite_fit(result):
+    """Solver success is recorded separately; finite nonconverged candidates remain eligible."""
+    return np.isfinite(result.cost) and np.all(np.isfinite(result.x))
 
 def w_estimate_staged(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger):
     """Coarse-to-fine fit at a single checkpoint, using only data up to t_cutoff.
@@ -380,9 +392,14 @@ def w_estimate_staged(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_d
         t *= 2
     stages.append(t_cutoff)
     w = w0
+    residual_calls = 0
     for t_stage in stages:
         result = w_estimate_linearized(gaussian_noise, expectation_true, w, t_stage, U_c, U_c_dagger)
+        residual_calls += result.residual_calls
+        if not is_finite_fit(result):
+            break #Do not warm-start from an invalid result; the independent direct fit can still recover.
         w = result.x
+    result.residual_calls = residual_calls
     return result
 
 def w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger):
@@ -390,8 +407,9 @@ def w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_da
 
     At weak-probe noise (sn_sd ~ 1) the first stages carry almost no information, so the
     staged chain leaves the true basin even when started at w_true, and the wrong minimum
-    can sit inside the chi-square band so no retry fires. On the staged-only weak run
-    (data_mle_over_time_weak_1, not kept; reproducible from commit 8634fca with the
+    can sit inside the chi-square band, suppressing retries under the former cost-gated
+    policy. On the staged-only weak run (data_mle_over_time_weak_1, not kept;
+    reproducible from commit 8634fca with the
     weak_2 settings) the true-basin minimum had the lower cost in 216 of 222 such fits and
     a direct fit from w = 0 found it in 208; staging still rescues the long-record cases
     where a direct fit alone falls into a local minimum. Ties keep the staged fit; result.direct records
@@ -403,24 +421,34 @@ def w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_da
         return staged
     direct = w_estimate_linearized(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
     direct.direct = True
-    return direct if direct.cost < staged.cost else staged
+    residual_calls = staged.residual_calls + direct.residual_calls
+    best = direct if is_finite_fit(direct) and (not is_finite_fit(staged) or direct.cost < staged.cost) else staged
+    best.residual_calls = residual_calls
+    return best
 
 def w_estimate_over_time(gaussian_noise, expectation_true, w_starts, time_cutoffs, U_c, U_c_dagger):
     """Fit w at each time cutoff independently for a single noise realization.
 
-    Each cutoff fits from w = 0 both staged and directly (w_estimate_start); if the lower
-    cost fails the chi-square acceptance test (i.e. the optimizer provably missed the
-    global minimum), retry from the pre-drawn random starts in w_starts[j] (each fit the
-    same two ways) and keep the lowest-cost result.
+    Evaluate w = 0 and every pre-drawn random start, each staged and directly, then
+    keep the lowest finite cost. The noise-cost band is diagnostic only: an in-band
+    local minimum must not suppress other starts. Exact ties retain the earlier fit.
     """
     out = []
     for j, t_cutoff in enumerate(time_cutoffs):
-        best = w_estimate_start(gaussian_noise, expectation_true, np.zeros(3), t_cutoff, U_c, U_c_dagger)
-        if best.cost > cost_accept_threshold(t_cutoff):
-            for w0 in w_starts[j]:
-                res = w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
-                if res.cost < best.cost:
-                    best = res
+        start_time = t.perf_counter()
+        best = None
+        residual_calls = 0
+        starts = [np.zeros(3), *w_starts[j]]
+        for start_index, w0 in enumerate(starts):
+            res = w_estimate_start(gaussian_noise, expectation_true, w0, t_cutoff, U_c, U_c_dagger)
+            residual_calls += res.residual_calls
+            if is_finite_fit(res) and (best is None or res.cost < best.cost):
+                best = res
+                best.start_index = start_index
+        if best is None:
+            raise RuntimeError(f"No finite optimizer candidate at cutoff {t_cutoff} after {len(starts)} starts")
+        best.residual_calls = residual_calls
+        best.elapsed_seconds = t.perf_counter() - start_time
         out.append(best)
     return out
 
@@ -503,9 +531,17 @@ def run_all_betas(w_true):
     accept_fraction = np.zeros((n_beta, n_time)) #QA metric: fraction of all collected fits within the chi-square band
     fit_success = np.zeros((n_beta, n_time, iter), dtype=bool) #least_squares success flag per fit
     fit_direct = np.zeros((n_beta, n_time, iter), dtype=bool) #True where the direct full-length fit beat the staged fit
+    fit_diagnostics = {
+        "fit_start_index": np.zeros((n_beta, n_time, iter), dtype=int),
+        "fit_status": np.zeros((n_beta, n_time, iter), dtype=int),
+        "fit_optimality": np.zeros((n_beta, n_time, iter)),
+        "fit_residual_calls": np.zeros((n_beta, n_time, iter), dtype=int),
+        "fit_elapsed_seconds": np.zeros((n_beta, n_time, iter)),
+    }
     w_est = np.zeros((n_beta, n_time, iter_save, 3))
     w_est_all = np.zeros((n_beta, n_time, iter, 3))
     cost_est_all = np.zeros((n_beta, n_time, iter))
+    cost_true_all = np.zeros((n_beta, n_time, iter)) #Diagnostic only; never used by the optimizer.
     phi_all = np.zeros((n_beta, iter, n_phi_unique))
     realization_ids_kept = np.zeros((n_beta, n_time, iter_save), dtype=int)
     backaction = np.zeros((n_beta, n_time, iter))
@@ -551,8 +587,12 @@ def run_all_betas(w_true):
         noise_cumsq = 0.5 * np.cumsum(np.square(np.asarray(noise_batch)), axis=1)
         for b in range(n_beta):
             task_mask = beta_of_task == b
+            first_id = int(cost_true_count[b])
+            last_id = first_id + int(np.sum(task_mask))
             for j, t_cutoff in enumerate(time_cutoffs_array):
-                cost_true_sum[b, j] += np.sum(noise_cumsq[task_mask, int(n_meas_cum[t_cutoff]) - 1])
+                truth_costs = noise_cumsq[task_mask, int(n_meas_cum[t_cutoff]) - 1]
+                cost_true_all[b, j, first_id:last_id] = truth_costs
+                cost_true_sum[b, j] += np.sum(truth_costs)
             cost_true_count[b] += np.sum(task_mask)
 
         for b, (res_list, fisher_list, phi_unique, diagnostic) in zip(beta_of_task, batch_results):
@@ -561,6 +601,11 @@ def run_all_betas(w_true):
             phi_all[b, realization_id] = phi_unique
             for j, res in enumerate(res_list):
                 w_est_over_time[b][j].append((res.x, res.cost, res.success, phi_unique, res.direct))
+                fit_diagnostics["fit_start_index"][b, j, realization_id] = res.start_index
+                fit_diagnostics["fit_status"][b, j, realization_id] = res.status
+                fit_diagnostics["fit_optimality"][b, j, realization_id] = res.optimality
+                fit_diagnostics["fit_residual_calls"][b, j, realization_id] = res.residual_calls
+                fit_diagnostics["fit_elapsed_seconds"][b, j, realization_id] = res.elapsed_seconds
             for j, fm in enumerate(fisher_list):
                 fisher_sum[b, j] += fm
                 inverse, singular = invert_fisher(fm)
@@ -589,8 +634,8 @@ def run_all_betas(w_true):
             min_cost_estimate[b, j] = all_costs.min()
 
             #QA: fraction of all fits whose cost lies within the chi-square acceptance band
-            #(a metric only -- nothing is filtered by it). accept_fraction below ~0.98 flags
-            #cutoffs where the optimizer still converged to local minima; raise --n-extra-starts.
+            #(a metric only -- nothing is filtered by it). A low fraction warrants checking
+            #optimization and the noise model; passing the band does not certify a global minimum.
             accept_fraction[b, j] = np.mean(all_costs <= cost_accept_threshold(t_cutoff))
 
             #Calculate covariance and mean of w estimates at this time cutoff
@@ -650,9 +695,11 @@ def run_all_betas(w_true):
         "accept_fraction": accept_fraction,
         "fit_success": fit_success,
         "fit_direct": fit_direct,
+        **fit_diagnostics,
         "w_est": w_est,
         "w_est_all": w_est_all,
         "cost_est_all": cost_est_all,
+        "cost_true_all": cost_true_all,
         "phi_all": phi_all,
         "realization_ids_kept": realization_ids_kept,
         "backaction": backaction,
@@ -694,6 +741,9 @@ FILE_NAME_MAP = {
     "fisher_inv_trace": "fisher_inv_trace", "cov_array_trace": "covar_trace",
     "infidelity_values": "infidelity", "MSE": "MSE",
     "w_est_all": "w_est_all", "cost_est_all": "cost_est_all", "phi_all": "phi_all",
+    "cost_true_all": "cost_true_all", "fit_start_index": "fit_start_index",
+    "fit_status": "fit_status", "fit_optimality": "fit_optimality",
+    "fit_residual_calls": "fit_residual_calls", "fit_elapsed_seconds": "fit_elapsed_seconds",
     "realization_ids_kept": "realization_ids_kept", "backaction": "backaction",
     "crossing_times": "crossing_times", "weak_valid": "weak_valid", "unit_valid": "unit_valid",
     "weak_valid_fraction": "weak_valid_fraction", "fisher_singular": "fisher_singular",
@@ -732,7 +782,7 @@ parameters = (
     f"Parameters: J = {J}, beta_array = {beta_array}, omega = {omega}, w_stdev = {w_stdev:.3f}, sn_sd = {sn_sd:.3f}, "
     f"delta_t = {delta_t}, t_steps = {t_steps}, iter = {iter}, iter_save = {iter_save}, random_phase_steps = {random_phase_steps}, "
     f"measurement_steps = {measurement_steps}, time_cutoffs_array = {time_cutoffs_array}, "
-    f"Fits: lower cost of staged (t_stage_start = {t_stage_start}) and direct full-length fit per start, n_extra_starts = {n_extra_starts} (independent per checkpoint, anchor w = 0; fit_direct.npy flags direct wins); "
+    f"Fits: lowest finite cost of staged (t_stage_start = {t_stage_start}) and direct full-length fits from w = 0 and all n_extra_starts = {n_extra_starts} random starts at every checkpoint, regardless of the cost band (independent checkpoints; fit_direct.npy flags direct wins); "
     f"Initial state: theta_scs = {theta_scs:.3f}, phi_scs = {phi_scs:.3f}; Initial observable = {obs_0_string}; "
     f"n_trials = {n_trials} true-parameter draws (see w_true.npy, shape (n_trials, 3)); a fresh control "
     f"phase sequence phi is drawn independently for every fit realization (every call to run_realization); "
@@ -771,10 +821,20 @@ probe_parameters = {
     "validity_rule": "B < level (equality is the first invalid bin)",
     "fisher_singularity_rule": "lambda_min <= 3*float64_eps*lambda_max, or inversion fails/nonfinite; inverse is NaN",
     "fisher_average_rule": "ordinary means over all realizations; singular inverses propagate NaN",
-    "fit_rule": "each start (w = 0, then the n_extra_starts random starts if the best cost exceeds the 5-sigma "
-                "chi-square band) is fit both staged (doubling prefixes from t_stage_start) and directly on the full "
-                "cutoff; the lowest cost is kept; fit_direct flags fits won by a direct candidate, including wins "
-                "at optimizer tolerance within the same minimum",
+    "fit_rule": "at every cutoff, w = 0 and all n_extra_starts pre-drawn random starts are evaluated, regardless "
+                "of the noise-cost band; each start is fit staged (doubling prefixes from t_stage_start) and "
+                "directly on the full cutoff, with no duplicate single-stage solve; the lowest cost with finite "
+                "parameters and cost wins, even if solver success is false; exact ties retain the earlier "
+                "candidate (staged before direct, then start order); no finite candidate raises an error",
+    "fit_diagnostics": {
+        "fit_direct": "whether the winning candidate used a direct full-cutoff fit; tiny cost differences can select the same minimum",
+        "fit_start_index": "winning start: 0 for w = 0, 1..n_extra_starts for pre-drawn random starts",
+        "fit_status": "winning least_squares termination status; success does not certify global convergence",
+        "fit_optimality": "winning least_squares optimality, with unchanged raw residual scaling",
+        "fit_residual_calls": "total residual calls across all starts, both routes and all prefix stages, including numerical-Jacobian calls",
+        "fit_elapsed_seconds": "elapsed fitting time per cutoff across all starts and stages; excludes trajectory, Fisher and backaction calculations",
+        "cost_true_all": "0.5*sum(noise[:n_meas]**2) per realization; simulation diagnostic only, never used for fitting or acceptance",
+    },
     "weak_budget_rule": "fisher_inv_realavg_trace_weak_budget = fisher_inv_realavg_trace*backaction_mean/weak_threshold: "
                         "the reachable bound if the probe flux were rescaled per beta and cutoff so the realization-mean B "
                         "equals weak_threshold there; flux-independent, so legacy and weak calibrations agree to rounding for "
@@ -782,6 +842,7 @@ probe_parameters = {
     "axes": {
         "w_est_all": "trial,beta,time,realization,component",
         "cost_est_all/fit_success/fit_direct/backaction/weak_valid/unit_valid/fisher_singular": "trial,beta,time,realization (original draw order)",
+        "cost_true_all/fit_start_index/fit_status/fit_optimality/fit_residual_calls/fit_elapsed_seconds": "trial,beta,time,realization (original draw order, even when iter_save < iter)",
         "crossing_times": "trial,beta,realization,level (weak threshold then 1)",
         "phi_all": "trial,beta,realization,phase_block",
         "realization_ids_kept": "trial,beta,time,kept_fit; zero-based original realization IDs",
@@ -798,6 +859,7 @@ parameters += (f"\nExact probe metadata: probe_parameters.json; G={G!r}, N_a={N_
                f"weak_target_time={args.weak_target_time!r}, weak_threshold={args.weak_threshold!r}. "
                "Diagnostics use all measurement bins including time zero; NaN crossing times mean "
                "beyond the simulated record. w_est_all/cost_est_all retain every fit; "
+               "cost_true_all and fit diagnostics follow the same original realization order; "
                "realization_ids_kept maps optional cost selection back to original draw order.\n")
 
 #Full per-trial data, shape (n_trials, n_beta, n_time, ...) -- n_trials=1 keeps the array

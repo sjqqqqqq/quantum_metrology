@@ -35,7 +35,7 @@ Use four-space Python indentation and descriptive snake_case names, retaining es
 
 ## Testing Guidelines
 
-No automated test framework, test naming convention, or coverage threshold exists. Validate changes with reduced, fixed-seed runs of the affected version; compare array shapes, fit acceptance, and numerical results with a baseline. `--iter` must divide evenly by `--batch-size`; v6/v7 require positive betas. Preserve trial/beta/time axes and check each dataset's `parameters.txt` before comparisons.
+Run `.venv/bin/python test_v4_optimizer.py` for focused v4 optimizer regression tests. There is no project-wide test suite or coverage threshold. Validate simulation changes with reduced, fixed-seed runs of the affected version; compare array shapes, fit acceptance, and numerical results with a baseline. `--iter` must divide evenly by `--batch-size`; v6/v7 require positive betas. Preserve trial/beta/time axes and check each dataset's `parameters.txt` before comparisons.
 
 ## Commit & Pull Request Guidelines
 
